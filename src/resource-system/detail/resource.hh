@@ -20,6 +20,7 @@ struct resource
     cc::function_ptr<void(resource&)> load = nullptr;
 
     // TODO: lifetime?
+    /// this resource depends on all resources in dependencies
     cc::vector<resource*> dependencies;
 
     bool is_loaded() const { return data != nullptr; }

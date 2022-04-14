@@ -44,6 +44,7 @@ struct handle
 
     /// returns the resource
     /// NOTE: requires "is_loaded()"
+    /// TODO: make name more verbose so it's less encouraged?
     T const& get() const
     {
         CC_ASSERT(is_loaded());
@@ -53,6 +54,9 @@ struct handle
     }
 
     /// equivalent to "return try_load() ? &get() : nullptr"
+    /// Usage:
+    ///   if (auto d = my_handle.try_get())
+    ///       use(*d);
     T const* try_get() const
     {
         auto data = detail::resource_try_get(*resource);

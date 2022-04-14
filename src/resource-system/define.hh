@@ -131,7 +131,7 @@ template <class NodeT, class... Args>
 [[nodiscard]] auto load(NodeT&& node, Args&&... args)
 {
     auto h = res::define(cc::forward<NodeT>(node), cc::forward<Args>(args)...);
-    h.try_load();
+    h.request();
     return h;
 }
 }
