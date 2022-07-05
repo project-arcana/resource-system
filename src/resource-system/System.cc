@@ -13,11 +13,11 @@ res::System& res::system()
     return system;
 }
 
-bool res::detail::resource_is_loaded(resource const& r) { return r.is_loaded(); }
+bool res::detail::resource_is_loaded(resource const& r) { return r.is_loaded; }
 
 bool res::detail::resource_try_load(resource& r)
 {
-    if (r.is_loaded())
+    if (r.is_loaded)
         return true;
 
     system().trigger_load(r);
@@ -26,7 +26,7 @@ bool res::detail::resource_try_load(resource& r)
 
 void const* res::detail::resource_get(resource const& r)
 {
-    CC_ASSERT(r.is_loaded() && "resource not loaded. did you forget to call try_load? or do you want to use try_get?");
+    CC_ASSERT(r.is_loaded && "resource not loaded. did you forget to call try_load? or do you want to use try_get?");
     return r.data;
 }
 
@@ -34,6 +34,19 @@ void const* res::detail::resource_try_get(resource& r)
 {
     resource_try_load(r);
     return r.data; // is nullptr if not loaded
+}
+
+void res::detail::resource_invalidate_dependers(detail::resource& r)
+{
+    // TODO: threadsafe!
+    for (auto rr : r.dependers)
+    {
+        if (!rr->is_loaded)
+            continue;
+
+        rr->is_loaded = false;
+        resource_invalidate_dependers(*rr);
+    }
 }
 
 void res::System::trigger_load(res::detail::resource& r)
@@ -55,7 +68,7 @@ void res::System::process_all()
         res.reserve(resources_to_load.size());
 
         for (auto r : resources_to_load)
-            if (!r->is_loaded()) // can already be loaded due to dependency chains
+            if (!r->is_loaded) // can already be loaded due to dependency chains
                 res.push_back(r);
 
         resources_to_load.clear();
@@ -63,13 +76,13 @@ void res::System::process_all()
         // process resources (might create new ones to load)
         for (auto r : res)
         {
-            CC_ASSERT(!r->data && "should never happen");
+            // CC_ASSERT(!r->data && "should never happen"); --- can happen during reload
             CC_ASSERT(r->node && "must have a node to load resource");
 
             // check if deps are available
             auto can_load = true;
             for (auto d : r->dependencies)
-                if (!d->is_loaded())
+                if (!d->is_loaded)
                 {
                     resources_to_load.add(d);
                     can_load = false;
@@ -86,7 +99,7 @@ void res::System::process_all()
             r->node->load(*r);
 
             // TODO: failable resource load?
-            CC_ASSERT(r->is_loaded() && "node load should never fail");
+            CC_ASSERT(r->is_loaded && "node load should never fail");
         }
     }
 }

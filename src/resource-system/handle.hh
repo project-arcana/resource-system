@@ -12,6 +12,7 @@ bool resource_is_loaded(detail::resource const& r);
 bool resource_try_load(detail::resource& r);
 void const* resource_get(detail::resource const& r);
 void const* resource_try_get(detail::resource& r);
+void resource_invalidate_dependers(detail::resource& r);
 
 template <class T>
 detail::resource* resource_from_handle(handle<T> const& h)
@@ -45,13 +46,13 @@ struct handle
     /// returns the resource
     /// NOTE: requires "is_loaded()"
     /// TODO: make name more verbose so it's less encouraged?
-    T const& get() const
-    {
-        CC_ASSERT(is_loaded());
-        auto data = detail::resource_get(*resource);
-        CC_ASSERT(data && "data should be loaded");
-        return *static_cast<T const*>(data);
-    }
+    // T const& get() const
+    // {
+    //     CC_ASSERT(is_loaded());
+    //     auto data = detail::resource_get(*resource);
+    //     CC_ASSERT(data && "data should be loaded");
+    //     return *static_cast<T const*>(data);
+    // }
 
     /// equivalent to "return try_load() ? &get() : nullptr"
     /// Usage:
@@ -61,6 +62,17 @@ struct handle
     {
         auto data = detail::resource_try_get(*resource);
         return static_cast<T const*>(data);
+    }
+
+    /// F : (T&) -> bool
+    /// returns true on actual change
+    template <class F>
+    void try_update(F&& update_f)
+    {
+        // TODO: cleaner
+        auto data = (T*)detail::resource_try_get(*resource);
+        if (data && update_f(*data))
+            detail::resource_invalidate_dependers(*resource);
     }
 
     handle() = default;

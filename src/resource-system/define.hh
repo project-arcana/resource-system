@@ -32,7 +32,9 @@ void register_dependency(detail::resource& r, T&& arg)
     if constexpr (is_handle<std::decay_t<T>>::value)
     {
         CC_ASSERT(arg.is_valid() && "invalid resource handle, did you forget to initialize it?");
-        r.dependencies.push_back(resource_from_handle(arg));
+        auto rr = resource_from_handle(arg);
+        r.dependencies.push_back(rr);
+        rr->dependers.push_back(&r);
     }
 }
 template <class T>
@@ -42,7 +44,9 @@ decltype(auto) get_arg(detail::resource& r, T&& arg)
     {
         CC_ASSERT(arg.is_valid() && "invalid resource handle, did you forget to initialize it?");
         CC_ASSERT(arg.is_loaded() && "argument is not loaded (should never happen)");
-        return arg.get();
+        auto p = arg.try_get();
+        CC_ASSERT(p && "should have been available");
+        return *p;
     }
     else
         return arg;
@@ -73,16 +77,23 @@ template <class NodeT, class... Args>
 
         using T = std::decay_t<decltype(node.execute(detail::get_arg(*r, args)...))>;
 
-        r->load = [](detail::resource& r) {
-            CC_ASSERT(!r.data && "already loaded?");
+        r->load = [](detail::resource& r)
+        {
+            // CC_ASSERT(!r.data && "already loaded?"); --- is ok during reloads
             CC_ASSERT(r.node && "no node provided?");
             CC_ASSERT(r.args && "no arguments provided? already deleted?");
             auto n = static_cast<std::remove_reference_t<NodeT>*>(r.node);
             auto argp = static_cast<args_t*>(r.args);
+            // important: data is assigned last, AFTER execution, so the update is basically atomatic
             r.data = cc::alloc<T>(cc::apply([&r, n](auto&&... args) { return n->execute(detail::get_arg(r, args)...); }, *argp));
+
+            // TODO: delete old data
+            //       this is not easy because someone might currently hold it
+            //       maybe data is always ref counted (shared_ptr-like)
         };
 
-        r->deleter = [](detail::resource& r) {
+        r->deleter = [](detail::resource& r)
+        {
             cc::free(static_cast<args_t*>(r.args));
             r.args = nullptr;
 
@@ -118,10 +129,12 @@ template <class T>
 {
     auto r = cc::alloc<detail::resource>();
     r->data = cc::alloc<T>(cc::move(value));
-    r->deleter = [](detail::resource& r) {
+    r->deleter = [](detail::resource& r)
+    {
         cc::free(static_cast<T*>(r.data));
         r.data = nullptr;
     };
+    r->is_loaded = true;
     // TODO: who is freeing r?
     return r->make_handle<T>();
 }

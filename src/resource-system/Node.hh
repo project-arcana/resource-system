@@ -11,6 +11,8 @@ namespace res
 {
 /// base class for parameterized resources in the computation graph
 /// NOTE: resources are a combination of nodes and parameters
+///
+/// TODO: configurable if old value should be reported
 class Node : public cc::polymorphic
 {
 public:
@@ -30,6 +32,7 @@ public:
     {
         CC_ASSERT(r.load && "no load function?");
         r.load(r);
+        r.is_loaded = true;
     }
 
     template <class... Args>
