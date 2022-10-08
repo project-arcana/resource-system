@@ -25,7 +25,7 @@ APP("viewer resource demo")
 
     auto params = res::create(grid_params{});
 
-    auto renderables = res::define(
+    auto renderables = res::load(
         [](grid_params p)
         {
             auto c = gv::canvas();
@@ -73,9 +73,6 @@ APP("viewer resource demo")
             return c.create_renderables();
         },
         params);
-
-    // initial request
-    renderables.request();
 
     gv::interactive(
         [&]

@@ -75,7 +75,7 @@ template <class NodeT, class... Args>
         // add dependencies to r
         (detail::register_dependency(*r, args), ...);
 
-        using T = std::decay_t<decltype(node.execute(detail::get_arg(*r, args)...))>;
+        using T = std::decay_t<decltype(node.execute(*r, detail::get_arg(*r, args)...))>;
 
         r->load = [](detail::resource& r)
         {
@@ -85,7 +85,7 @@ template <class NodeT, class... Args>
             auto n = static_cast<std::remove_reference_t<NodeT>*>(r.node);
             auto argp = static_cast<args_t*>(r.args);
             // important: data is assigned last, AFTER execution, so the update is basically atomatic
-            r.data = cc::alloc<T>(cc::apply([&r, n](auto&&... args) { return n->execute(detail::get_arg(r, args)...); }, *argp));
+            r.data = cc::alloc<T>(cc::apply([&r, n](auto&&... args) { return n->execute(r, detail::get_arg(r, args)...); }, *argp));
 
             // TODO: delete old data
             //       this is not easy because someone might currently hold it

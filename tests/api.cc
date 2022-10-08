@@ -1,4 +1,4 @@
-#include <nexus/test.hh>
+#include <nexus/app.hh>
 
 #include <clean-core/invoke.hh>
 #include <type_traits>
@@ -23,7 +23,7 @@ void view(Args const&...)
 }
 }
 
-TEST("resource API", disabled)
+APP("resource API")
 {
     // features:
     // - identify via hash(es)
@@ -64,6 +64,7 @@ TEST("resource API", disabled)
     // - nodes can be heterogeneously available (not in shipping, only on current pc, only on special server)
     //   (can be used to make sure certain nodes / resource compilers are not shipped)
     // - handle.diagnose_not_loaded() -> print why is not loaded (e.g. which dependencies are missing, are their nodes/systems executed?)
+    // - reflection system for resources
 
     // define resources
 

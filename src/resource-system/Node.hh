@@ -13,12 +13,20 @@ namespace res
 /// NOTE: resources are a combination of nodes and parameters
 ///
 /// TODO: configurable if old value should be reported
+///
+/// Custom nodes must define an execute function that returns the resource
 class Node : public cc::polymorphic
 {
 public:
     // TODO: don't use internal types?
     // TODO: can maybe made non-virtual because resources are type-erasing anyways
-    virtual void load(detail::resource& r) = 0;
+    // TODO: when should this be overwritten?
+    virtual void load(detail::resource& r)
+    {
+        CC_ASSERT(r.load && "no load function?");
+        r.load(r);
+        r.is_loaded = true;
+    }
 };
 
 template <class F>
@@ -28,15 +36,8 @@ public:
     F function;
     explicit FunctionNode(F fun) : function(cc::move(fun)) {}
 
-    void load(detail::resource& r) override
-    {
-        CC_ASSERT(r.load && "no load function?");
-        r.load(r);
-        r.is_loaded = true;
-    }
-
     template <class... Args>
-    auto execute(Args const&... args) const // can be executed multiple times -> const&, not &&
+    auto execute(detail::resource&, Args const&... args) const // can be executed multiple times -> const&, not &&
     {
         return cc::invoke(function, args...);
     }

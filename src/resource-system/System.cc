@@ -5,6 +5,7 @@
 
 #include <resource-system/define.hh>
 #include <resource-system/detail/resource.hh>
+#include <resource-system/file.hh>
 #include <resource-system/handle.hh>
 
 res::System& res::system()
@@ -59,6 +60,10 @@ void res::System::process_all()
 {
     // TODO: threadsafe!
 
+    // check for changes
+    res::file.check_hot_reloading();
+
+    // check for need-to-loads
     cc::vector<detail::resource*> res;
 
     while (!resources_to_load.empty())

@@ -13,6 +13,8 @@ namespace res::detail
 /// TODO: decouple data store from resources?
 ///       in particular using old data is not a problem anymore
 ///       we can also deduplicate stuff because everything is content-addressable
+/// 
+/// NOTE: resource is pointer-stable
 struct resource
 {
     // TODO: better data layout and stuff

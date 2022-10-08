@@ -17,4 +17,6 @@ target_include_directories(resource-system PUBLIC src/)
 
 target_link_libraries(resource-system PUBLIC
     clean-core
+    rich-log
+    babel-serializer
 )
