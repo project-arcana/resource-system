@@ -7,6 +7,11 @@ namespace res
 template <class T>
 struct handle;
 
+template <class T>
+struct result;
+
+struct error;
+
 class Node;
 class System;
 

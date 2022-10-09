@@ -42,22 +42,36 @@ void res::FileNode::check_hot_reloading()
         }
 }
 
-cc::array<std::byte> res::FileNode::execute(detail::resource& r, cc::string_view filename) const
+res::result<cc::array<std::byte>> res::FileNode::execute(detail::resource& r, cc::string_view filename) const
 {
     //
     return this->execute(r, filename, res::binary);
 }
 
-cc::array<std::byte> res::FileNode::execute(detail::resource& r, cc::string_view filename, binary_tag) const
+res::result<cc::array<std::byte>> res::FileNode::execute(detail::resource& r, cc::string_view filename, binary_tag) const
 {
     LOG("loading binary file '%s'", filename);
+
+    if (!babel::file::exists(filename))
+    {
+        LOG_WARN("file '%s' does not exist", filename);
+        return error::from_user(cc::format("file '%s' does not exist", filename));
+    }
+
     enable_hot_reloading_for(r, filename);
     return babel::file::read_all_bytes(filename);
 }
 
-cc::string res::FileNode::execute(detail::resource& r, cc::string_view filename, ascii_tag) const
+res::result<cc::string> res::FileNode::execute(detail::resource& r, cc::string_view filename, ascii_tag) const
 {
     LOG("loading ascii file '%s'", filename);
+
+    if (!babel::file::exists(filename))
+    {
+        LOG_WARN("file '%s' does not exist", filename);
+        return error::from_user(cc::format("file '%s' does not exist", filename));
+    }
+
     enable_hot_reloading_for(r, filename);
     return babel::file::read_all_text(filename);
 }

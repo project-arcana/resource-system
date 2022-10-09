@@ -6,6 +6,7 @@
 
 #include <resource-system/Node.hh>
 #include <resource-system/define.hh>
+#include <resource-system/result.hh>
 #include <resource-system/tags.hh>
 
 namespace res
@@ -43,9 +44,9 @@ public:
     // TODO:
     //  - support for virtual files
     //  - support for search paths
-    cc::array<std::byte> execute(detail::resource& r, cc::string_view filename) const;
-    cc::array<std::byte> execute(detail::resource& r, cc::string_view filename, binary_tag) const;
-    cc::string execute(detail::resource& r, cc::string_view filename, ascii_tag) const;
+    result<cc::array<std::byte>> execute(detail::resource& r, cc::string_view filename) const;
+    result<cc::array<std::byte>> execute(detail::resource& r, cc::string_view filename, binary_tag) const;
+    result<cc::string> execute(detail::resource& r, cc::string_view filename, ascii_tag) const;
 
 private:
     bool _hot_reload_enabled =
@@ -59,6 +60,7 @@ private:
     struct state;
     cc::unique_ptr<state> _state;
 
+    // TODO: disable hot reloading for deleted resources
     void enable_hot_reloading_for(detail::resource& r, cc::string_view filename) const;
 };
 }

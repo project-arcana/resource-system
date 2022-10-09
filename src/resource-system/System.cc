@@ -14,7 +14,7 @@ res::System& res::system()
     return system;
 }
 
-bool res::detail::resource_is_loaded(resource const& r) { return r.is_loaded; }
+bool res::detail::resource_is_loaded_no_error(resource const& r) { return r.is_loaded && !r.is_error(); }
 
 bool res::detail::resource_try_load(resource& r)
 {

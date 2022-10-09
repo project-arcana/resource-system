@@ -8,7 +8,7 @@ namespace res
 {
 namespace detail
 {
-bool resource_is_loaded(detail::resource const& r);
+bool resource_is_loaded_no_error(detail::resource const& r);
 bool resource_try_load(detail::resource& r);
 void const* resource_get(detail::resource const& r);
 void const* resource_try_get(detail::resource& r);
@@ -29,10 +29,11 @@ struct handle
     bool is_valid() const { return resource != nullptr; }
 
     /// true if the resource can be used immediately
+    /// NOTE: also implies error-free
     bool is_loaded() const
     {
         CC_ASSERT(is_valid());
-        return detail::resource_is_loaded(*resource);
+        return detail::resource_is_loaded_no_error(*resource);
     }
 
     /// triggers resource loading if not already loaded

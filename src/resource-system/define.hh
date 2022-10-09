@@ -13,6 +13,10 @@
 #include <resource-system/detail/resource.hh>
 #include <resource-system/handle.hh>
 
+// currently we need to include this
+// which includes cc::string and cc::vector
+#include <resource-system/result.hh>
+
 namespace res
 {
 namespace detail
@@ -27,6 +31,26 @@ struct is_handle<handle<T>> : std::true_type
 };
 
 template <class T>
+struct is_result : std::false_type
+{
+};
+template <class T>
+struct is_result<result<T>> : std::true_type
+{
+};
+
+template <class T>
+struct resource_type_of
+{
+    using type = T;
+};
+template <class T>
+struct resource_type_of<result<T>>
+{
+    using type = T;
+};
+
+template <class T>
 void register_dependency(detail::resource& r, T&& arg)
 {
     if constexpr (is_handle<std::decay_t<T>>::value)
@@ -38,7 +62,7 @@ void register_dependency(detail::resource& r, T&& arg)
     }
 }
 template <class T>
-decltype(auto) get_arg(detail::resource& r, T&& arg)
+decltype(auto) get_arg(detail::resource&, T&& arg)
 {
     if constexpr (is_handle<std::decay_t<T>>::value)
     {
@@ -50,6 +74,29 @@ decltype(auto) get_arg(detail::resource& r, T&& arg)
     }
     else
         return arg;
+}
+
+template <class T>
+bool is_arg_valid(detail::resource&, T&& arg)
+{
+    if constexpr (is_handle<std::decay_t<T>>::value)
+    {
+        CC_ASSERT(arg.is_valid() && "invalid resource handle, did you forget to initialize it?");
+        return arg.is_loaded();
+    }
+    else
+        return true;
+}
+
+template <class T>
+void add_invalid_resources(cc::vector<detail::resource*>& res, detail::resource&, T&& arg)
+{
+    if constexpr (is_handle<std::decay_t<T>>::value)
+    {
+        CC_ASSERT(arg.is_valid() && "invalid resource handle, did you forget to initialize it?");
+        if (!arg.is_loaded())
+            res.push_back(detail::resource_from_handle(arg));
+    }
 }
 }
 
@@ -75,17 +122,47 @@ template <class NodeT, class... Args>
         // add dependencies to r
         (detail::register_dependency(*r, args), ...);
 
-        using T = std::decay_t<decltype(node.execute(*r, detail::get_arg(*r, args)...))>;
+        using ExecRes = std::decay_t<decltype(node.execute(*r, detail::get_arg(*r, args)...))>;
+        using T = typename detail::resource_type_of<ExecRes>::type; // removes res::result
 
         r->load = [](detail::resource& r)
         {
+            constexpr bool can_fail = detail::is_result<ExecRes>::value;
+
             // CC_ASSERT(!r.data && "already loaded?"); --- is ok during reloads
             CC_ASSERT(r.node && "no node provided?");
             CC_ASSERT(r.args && "no arguments provided? already deleted?");
             auto n = static_cast<std::remove_reference_t<NodeT>*>(r.node);
             auto argp = static_cast<args_t*>(r.args);
+
+            // reset error state
+            r.error = nullptr;
+
             // important: data is assigned last, AFTER execution, so the update is basically atomatic
-            r.data = cc::alloc<T>(cc::apply([&r, n](auto&&... args) { return n->execute(r, detail::get_arg(r, args)...); }, *argp));
+            auto res = cc::apply(
+                [&r, n](auto&&... args) -> result<T>
+                {
+                    // any argument not ready? (e.g. a dependency with errors)
+                    // -> report error
+                    if (!(detail::is_arg_valid(r, args) && ...))
+                    {
+                        res::error e;
+                        e.type = error_type::missing_resource;
+                        e.description = "some dependencies are invalid";
+                        (detail::add_invalid_resources(e.deps, r, args), ...);
+                        return e;
+                    }
+                    else // otherwise execute the node
+                    {
+                        return n->execute(r, detail::get_arg(r, args)...);
+                    }
+                },
+                *argp);
+
+            if (res.has_error())
+                r.error = cc::make_unique<error>(cc::move(res.error()));
+            else
+                r.data = cc::alloc<T>(cc::move(res.value()));
 
             // TODO: delete old data
             //       this is not easy because someone might currently hold it
