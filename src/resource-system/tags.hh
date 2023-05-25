@@ -3,9 +3,9 @@
 namespace res
 {
 
-static struct ascii_tag
+static struct text_tag
 {
-} ascii;
+} text;
 
 static struct binary_tag
 {

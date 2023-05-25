@@ -46,7 +46,7 @@ public:
     //  - support for search paths
     result<cc::array<std::byte>> execute(detail::resource& r, cc::string_view filename) const;
     result<cc::array<std::byte>> execute(detail::resource& r, cc::string_view filename, binary_tag) const;
-    result<cc::string> execute(detail::resource& r, cc::string_view filename, ascii_tag) const;
+    result<cc::string> execute(detail::resource& r, cc::string_view filename, text_tag) const;
 
 private:
     bool _hot_reload_enabled =

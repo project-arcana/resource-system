@@ -62,7 +62,7 @@ res::result<cc::array<std::byte>> res::FileNode::execute(detail::resource& r, cc
     return babel::file::read_all_bytes(filename);
 }
 
-res::result<cc::string> res::FileNode::execute(detail::resource& r, cc::string_view filename, ascii_tag) const
+res::result<cc::string> res::FileNode::execute(detail::resource& r, cc::string_view filename, text_tag) const
 {
     LOG("loading ascii file '%s'", filename);
 
