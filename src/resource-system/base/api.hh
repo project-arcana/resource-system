@@ -55,11 +55,12 @@ namespace res::base
 {
 
 // TODO: other size? 128 bit? 256 bit?
-struct hash
+struct alignas(16) hash
 {
-    uint32_t words[5];
+    uint64_t w0;
+    uint64_t w1;
 };
-static_assert(sizeof(hash) == 20);
+// static_assert(sizeof(hash) == 20);
 
 struct comp_hash : hash
 {
@@ -82,6 +83,14 @@ public:
     virtual void set(hash const& h, cc::span<std::byte const> data) = 0;
 };
 
+struct computation_desc
+{
+    hash algo_hash;
+
+    // TODO: where can this be computed?
+    // TODO: is this immediate or multipart?
+};
+
 /// a resource system manages access / computation / lifetimes of resources
 /// the comp_hash key-value-storage usually must be recreated on startup and cannot be persistet
 /// but all other key-value-storages are customizable and "POD"
@@ -97,6 +106,11 @@ class ResourceSystem
     ResourceSystem(ResourceSystem const&) = delete;
     ResourceSystem& operator=(ResourceSystem&&) = delete;
     ResourceSystem& operator=(ResourceSystem const&) = delete;
+
+    // core operations
+public:
+    comp_hash define_computation(computation_desc desc);
+    res_hash define_resource(comp_hash const& computation, cc::span<res_hash const> args);
 
 
 private:

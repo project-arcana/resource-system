@@ -51,3 +51,15 @@ struct res::base::ResourceSystem::impl
 res::base::ResourceSystem::ResourceSystem() { m = cc::make_unique<impl>(); }
 
 res::base::ResourceSystem::~ResourceSystem() = default;
+
+res::base::comp_hash res::base::ResourceSystem::define_computation(computation_desc desc)
+{
+    // TODO
+    return comp_hash();
+}
+
+res::base::res_hash res::base::ResourceSystem::define_resource(comp_hash const& computation, cc::span<res_hash const> args)
+{
+    // TODO
+    return res_hash();
+}
