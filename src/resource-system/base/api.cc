@@ -236,8 +236,11 @@ void res::base::ResourceSystem::process_all()
     auto& queue = m->queue_resource_to_compute;
     auto& queue_mutex = m->queue_resource_to_compute_mutex;
 
-    auto& db = m->res_desc_by_hash;
-    auto& db_mutex = m->res_desc_by_hash_mutex;
+    auto& res_db = m->res_desc_by_hash;
+    auto& res_db_mutex = m->res_desc_by_hash_mutex;
+
+    auto& invoc_db = m->invoc_desc_by_hash;
+    auto& invoc_db_mutex = m->invoc_desc_by_hash_mutex;
 
     cc::vector<res_hash> args;
     cc::vector<cc::optional<content_data>> args_content;
@@ -267,12 +270,12 @@ void res::base::ResourceSystem::process_all()
 
         // TODO: is it better to look up dependencies directly here?
         // TODO: do we need to check if it's already up to date here?
-        db_mutex.lock_shared();
-        auto p_desc = db.get_ptr(res);
+        res_db_mutex.lock_shared();
+        auto p_desc = res_db.get_ptr(res);
         CC_ASSERT(p_desc && "overzealous GC?");
         args.push_back_range(p_desc->args);
         comp = p_desc->comp;
-        db_mutex.unlock_shared();
+        res_db_mutex.unlock_shared();
 
         // query arg content
         // NOTE: we query all args, even if some are missing
@@ -302,6 +305,21 @@ void res::base::ResourceSystem::process_all()
         for (auto i : cc::indices_of(args))
             args_content_hashes[i] = args_content[i].value().hash;
 
+        // read cached invocation data
+        auto const invoc = this->define_invocation(comp, args_content_hashes);
+        // TODO: impure resource skip this
+        content_data invoc_data;
+        content_hash invoc_content_hash;
+        invoc_db_mutex.lock_shared();
+        auto p_invoc = invoc_db.get_ptr(invoc);
+        if (p_invoc)
+        {
+            invoc_data = p_invoc->data;
+            invoc_content_hash = p_invoc->content;
+        }
+        invoc_db_mutex.unlock_shared();
+
+        
         // TODO
         // - make invoc
         // - check if invoc cached
@@ -355,7 +373,7 @@ res::base::content_hash res::base::ResourceSystem::store_content(cc::span<const 
     return hash;
 }
 
-res::base::invoc_hash res::base::ResourceSystem::define_invocation(comp_hash const& computation, cc::span<const content_hash> args)
+res::base::invoc_hash res::base::ResourceSystem::define_invocation(comp_hash const& computation, cc::span<content_hash const> args)
 {
     cc::sha1_builder sha1;
     sha1.add(cc::as_byte_span(computation));
