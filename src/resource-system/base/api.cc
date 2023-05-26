@@ -243,7 +243,7 @@ void res::base::ResourceSystem::process_all()
     auto& invoc_db_mutex = m->invoc_desc_by_hash_mutex;
 
     cc::vector<res_hash> args;
-    cc::vector<cc::optional<content_data>> args_content;
+    cc::vector<content_data> args_content;
     cc::vector<content_hash> args_content_hashes;
 
     // not locked because this is fine to be approximative
@@ -286,8 +286,10 @@ void res::base::ResourceSystem::process_all()
         {
             // TODO: only content_hash required
             //       this makes a difference when loading content lazily from file
-            args_content[i] = this->try_get_resource_content(args[i], true);
-            if (!args_content[i].has_value())
+            auto content = this->try_get_resource_content(args[i], true);
+            if (content.has_value())
+                args_content[i] = content.value();
+            else
                 has_all_args = false;
         }
 
@@ -319,7 +321,12 @@ void res::base::ResourceSystem::process_all()
         }
         invoc_db_mutex.unlock_shared();
 
-        
+        // needs computation?
+        if (invoc_data.is_invalid())
+        {
+            // TODO: foreign execution
+        }
+
         // TODO
         // - make invoc
         // - check if invoc cached

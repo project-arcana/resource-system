@@ -94,13 +94,24 @@ enum class content_state
     opaque_data,
 };
 
-struct opaque_data
+struct serialized_data
+{
+    cc::span<std::byte const> bytes;
+};
+
+// can refer to serialized data
+struct deserialized_data
 {
     // TODO: invoc hash as content_hash?
     void* data_ptr;
     cc::function_ptr<void(void*)> deleter;
 };
 
+// TODO: proper states
+//       in memory but not serialized
+//       hash only
+//       serialized but not deserialized
+//       ...
 struct content_data
 {
     content_hash hash;
@@ -110,12 +121,16 @@ struct content_data
     // it's still accessible but will change in the future
     bool is_outdated = false;
 
-    union data_t
-    {
-        cc::span<std::byte const> serialized;
-        opaque_data opaque;
+    bool is_invalid() const { return state == content_state::invalid; }
 
-        data_t() {}
+    struct
+    {
+        // raw span/array of bytes
+        cc::optional<serialized_data> serialized;
+
+        // "real" c++ data
+        // can reference into serialized data
+        cc::optional<deserialized_data> deserialized;
     } data;
 };
 
@@ -124,7 +139,7 @@ struct computation_desc
     cc::string name;
     hash algo_hash;
 
-    cc::unique_function<void()> compute_resource;
+    cc::unique_function<void(cc::span<content_data const>)> compute_resource;
 
     // TODO: where can this be computed?
     // TODO: is this immediate or multipart?
