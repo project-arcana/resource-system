@@ -4,11 +4,15 @@
 #include <cstdint>
 
 #include <clean-core/optional.hh>
+#include <clean-core/pair.hh>
 #include <clean-core/span.hh>
 #include <clean-core/string.hh>
 #include <clean-core/unique_function.hh>
 #include <clean-core/unique_ptr.hh>
 #include <clean-core/vector.hh>
+
+// for atomic_add
+#include <clean-core/intrinsics.hh>
 
 // [hash based resource system]
 // this file contains the base API to create and manage resources
@@ -84,6 +88,13 @@ struct content_hash : hash
 };
 struct invoc_hash : hash
 {
+};
+
+struct alignas(64) ref_count
+{
+    int count = 1;
+    void inc() { cc::intrin_atomic_add((int volatile*)&count, 1); }
+    void dec() { cc::intrin_atomic_add((int volatile*)&count, -1); }
 };
 
 // TODO: proper states
@@ -191,8 +202,8 @@ public:
     comp_hash define_computation(computation_desc desc);
 
     // TODO: flags for impure resources here?
-    // TODO: refcounting?
-    res_hash define_resource(comp_hash const& computation, cc::span<res_hash const> args);
+    // NOTE: the returned counter is initialized with count=1
+    cc::pair<res_hash, ref_count*> define_resource(comp_hash const& computation, cc::span<res_hash const> args);
 
     // NOTE: can return content with is_outdated = true
     cc::optional<content_ref> try_get_resource_content(res_hash res, bool enqueue_if_not_found = true);

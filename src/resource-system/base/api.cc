@@ -41,6 +41,10 @@ struct res_desc
     comp_hash comp;
     cc::vector<res_hash> args;
 
+    // NOTE: this only tracks external references
+    //       internal references are part of the GC process
+    ref_count* ref_counter = nullptr;
+
     // [cache for resources]
     // TODO: store this in a separate store?
     //       -> reduces contention a lot in traversal-during-computation scenarios
@@ -244,8 +248,10 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
     return hash;
 }
 
-res::base::res_hash res::base::ResourceSystem::define_resource(comp_hash const& computation, cc::span<res_hash const> args)
+cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::define_resource(comp_hash const& computation, cc::span<res_hash const> args)
 {
+    ref_count* counter = nullptr;
+
     // make hash
     cc::sha1_builder sha1;
     sha1.add(cc::as_byte_span(computation));
@@ -261,6 +267,8 @@ res::base::res_hash res::base::ResourceSystem::define_resource(comp_hash const& 
                                         CC_ASSERT(args.size() == prev_desc.args.size() && "res_hash collision");
                                         for (auto i : cc::indices_of(args))
                                             CC_ASSERT(args[i] == prev_desc.args[i] && "res_hash collision");
+
+                                        counter = prev_desc.ref_counter;
                                     });
 
     // write: add to map
@@ -269,11 +277,14 @@ res::base::res_hash res::base::ResourceSystem::define_resource(comp_hash const& 
         res_desc desc;
         desc.comp = computation;
         desc.args.push_back_range(args);
+        desc.ref_counter = cc::alloc<ref_count>();
+        counter = desc.ref_counter;
 
         m->res_store.set(hash, cc::move(desc));
     }
 
-    return hash;
+    CC_ASSERT(counter != nullptr);
+    return {hash, counter};
 }
 
 cc::optional<res::base::content_ref> res::base::ResourceSystem::try_get_resource_content(res_hash res, bool enqueue_if_not_found)
