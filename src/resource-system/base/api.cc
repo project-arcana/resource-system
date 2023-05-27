@@ -62,10 +62,11 @@ struct content_desc
 
     bool has_data() const { return content.serialized_data.has_value() || content.runtime_data.has_value() || content.error_data.has_value(); }
 
-    content_ref make_ref() const
+    content_ref make_ref(int gen) const
     {
         CC_ASSERT(has_data() && "how does this happen?");
         content_ref r;
+        r.generation = gen;
         if (content.error_data.has_value())
             r.error_msg = content.error_data.value().message;
         else
@@ -546,7 +547,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
         m->content_store.set(content_hash, content_desc{cc::move(comp_result)});
 
         // TODO: if we could prevent error string sso, we could save this lookup
-        auto content_data = m->content_store.get(content_hash, [](content_desc const& desc) { return desc.make_ref(); });
+        auto content_data = m->content_store.get(content_hash, [gen](content_desc const& desc) { return desc.make_ref(gen); });
 
         // store result in invoc store
         // we always set this
@@ -591,29 +592,7 @@ void res::base::ResourceSystem::process_all()
 
 cc::optional<res::base::content_ref> res::base::ResourceSystem::query_content(content_hash hash)
 {
-    return m->content_store.get(hash, [](content_desc const& desc) { return desc.make_ref(); });
-}
-
-res::base::content_hash res::base::ResourceSystem::store_content(cc::span<const std::byte> data)
-{
-    cc::sha1_builder sha1;
-    sha1.add(data);
-    auto const hash = finalize_as<content_hash>(sha1);
-
-    auto& db = m->content_desc_by_hash;
-    auto& mutex = m->content_desc_by_hash_mutex;
-
-    content_desc desc;
-    desc.data_backing_buffer = cc::array<std::byte>(data); // copy
-    desc.data.hash = hash;
-    desc.data.state = content_state::serialized_data;
-    desc.data.data.serialized = desc.data_backing_buffer;
-
-    mutex.lock();
-    db[hash] = cc::move(desc);
-    mutex.unlock();
-
-    return hash;
+    return m->content_store.get(hash, [gen = int(generation)](content_desc const& desc) { return desc.make_ref(gen); });
 }
 
 res::base::invoc_hash res::base::ResourceSystem::define_invocation(comp_hash const& computation, cc::span<content_hash const> args)
@@ -624,45 +603,3 @@ res::base::invoc_hash res::base::ResourceSystem::define_invocation(comp_hash con
         sha1.add(cc::as_byte_span(h));
     return finalize_as<invoc_hash>(sha1);
 }
-
-// cc::optional<res::base::invoc_result> res::base::ResourceSystem::query_invocation(invoc_hash hash, bool try_query_data)
-//{
-//     cc::optional<invoc_result> opt_result;
-
-//    auto& db = m->invoc_desc_by_hash;
-//    auto& mutex = m->invoc_desc_by_hash_mutex;
-
-//    // look up cached invocation
-//    mutex.lock_shared();
-//    if (auto p_desc = db.get_ptr(hash))
-//    {
-//        invoc_result result;
-//        result.content = p_desc->content;
-//        result.data = p_desc->data;
-//        opt_result = result;
-//    }
-//    mutex.unlock_shared();
-
-//    // check if content should be queried
-//    if (try_query_data &&         //
-//        opt_result.has_value() && //
-//        opt_result.value().data.state != content_state::invalid)
-//    {
-//        auto h_content = opt_result.value().content;
-//        auto d_content = this->query_content(h_content);
-
-//        // write back to db
-//        if (d_content.has_value())
-//        {
-//            opt_result.value().data = d_content.value();
-
-//            mutex.lock();
-//            auto& res = db[hash];
-//            res.content = h_content;
-//            res.data = d_content.value();
-//            mutex.unlock();
-//        }
-//    }
-
-//    return opt_result;
-//}

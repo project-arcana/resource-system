@@ -96,6 +96,9 @@ struct content_ref
 {
     content_hash hash;
 
+    // generation that this content was computed for
+    int generation = -1;
+
     // if this is a true, then the data is not necessarily the "most current"
     // it's still accessible but will change in the future
     bool is_outdated = false;
@@ -157,12 +160,6 @@ struct computation_desc
     // - computation can return a resource that should be evaluated
 };
 
-// struct invoc_result
-// {
-//     content_hash content;
-//     content_data data;
-// };
-
 /// a resource system manages access / computation / lifetimes of resources
 /// the comp_hash key-value-storage usually must be recreated on startup and cannot be persistet
 /// but all other key-value-storages are customizable and "POD"
@@ -206,6 +203,13 @@ public:
     // though in practice, most will hit the content caches anyways
     void invalidate_impure_resources();
 
+    /// returns true if this content can be used
+    /// returns false if try_get_resource_content should be called again
+    /// this call is extremely cheap
+    /// it's designed to be executed before every access to the content
+    CC_FORCE_INLINE bool is_up_to_date(content_ref const& content) const { return content.generation >= generation; }
+    CC_FORCE_INLINE bool is_up_to_date(int gen) const { return gen >= generation; }
+
     // processing API
 public:
     // NOTE: THIS IS DEBUG API
@@ -217,15 +221,8 @@ private:
     // TODO: error states?
     cc::optional<content_ref> query_content(content_hash hash);
 
-    // TODO: error states?
-    // TODO: version that can move data?
-    content_hash store_content(cc::span<std::byte const> data);
-
     // NOTE: this is really fast and does not need DB access
     invoc_hash define_invocation(comp_hash const& computation, cc::span<content_hash const> args);
-
-    // TODO: error states?
-    // cc::optional<invoc_result> query_invocation(invoc_hash hash, bool try_query_data = true);
 
     // NOTE: never returns outdated data
     cc::optional<content_hash> try_get_resource_content_hash(res_hash res, bool enqueue_if_not_found = true);
