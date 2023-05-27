@@ -8,10 +8,14 @@
 #include <clean-core/string.hh>
 #include <clean-core/unique_function.hh>
 #include <clean-core/unique_ptr.hh>
+#include <clean-core/vector.hh>
 
 // [hash based resource system]
 // this file contains the base API to create and manage resources
 // everything not in base/ is the "porcelain" part of the resource API
+
+// [open questions]
+//  - how to handle cancellation in all this?
 
 // hash types:
 //
@@ -82,56 +86,48 @@ struct invoc_hash : hash
 {
 };
 
-enum class content_state
-{
-    // not valid content
-    invalid = 0,
-    // valid but the content is an error (e.g. exception during execution)
-    error,
-    // valid and the data is serialized
-    serialized_data,
-    // valid and the data is void* (unserializable)
-    opaque_data,
-};
-
-struct serialized_data
-{
-    cc::span<std::byte const> bytes;
-};
-
-// can refer to serialized data
-struct deserialized_data
-{
-    // TODO: invoc hash as content_hash?
-    void* data_ptr;
-    cc::function_ptr<void(void*)> deleter;
-};
-
 // TODO: proper states
 //       in memory but not serialized
 //       hash only
 //       serialized but not deserialized
 //       ...
-struct content_data
+// TODO: refcounting here?
+struct content_ref
 {
     content_hash hash;
-    content_state state = content_state::invalid;
 
     // if this is a true, then the data is not necessarily the "most current"
     // it's still accessible but will change in the future
     bool is_outdated = false;
 
-    bool is_invalid() const { return state == content_state::invalid; }
+    void* data_ptr = nullptr;
 
-    struct
-    {
-        // raw span/array of bytes
-        cc::optional<serialized_data> serialized;
+    // TODO: more elaborate error type?
+    cc::string_view error_msg;
 
-        // "real" c++ data
-        // can reference into serialized data
-        cc::optional<deserialized_data> deserialized;
-    } data;
+    bool has_value() const { return data_ptr != nullptr; }
+    bool has_error() const { return data_ptr == nullptr; }
+};
+
+struct content_serialized_data
+{
+    cc::vector<std::byte> blob;
+};
+struct content_runtime_data
+{
+    void* data_ptr;
+    cc::function_ptr<void(void*)> deleter;
+};
+struct content_error_data
+{
+    cc::string message;
+};
+
+struct computation_result
+{
+    cc::optional<content_serialized_data> serialized_data;
+    cc::optional<content_runtime_data> runtime_data;
+    cc::optional<content_error_data> error_data;
 };
 
 struct computation_desc
@@ -139,7 +135,8 @@ struct computation_desc
     cc::string name;
     hash algo_hash;
 
-    cc::unique_function<void(cc::span<content_data const>)> compute_resource;
+    // NOTE: the arg content is never outdated
+    cc::unique_function<computation_result(cc::span<content_ref const>)> compute_resource;
 
     // TODO: where can this be computed?
     // TODO: is this immediate or multipart?
@@ -160,11 +157,11 @@ struct computation_desc
     // - computation can return a resource that should be evaluated
 };
 
-struct invoc_result
-{
-    content_hash content;
-    content_data data;
-};
+// struct invoc_result
+// {
+//     content_hash content;
+//     content_data data;
+// };
 
 /// a resource system manages access / computation / lifetimes of resources
 /// the comp_hash key-value-storage usually must be recreated on startup and cannot be persistet
@@ -200,10 +197,8 @@ public:
     // TODO: refcounting?
     res_hash define_resource(comp_hash const& computation, cc::span<res_hash const> args);
 
-    // TODO: error states?
-    // TODO: non-serialized type
-    // TODO: access to outdated data
-    cc::optional<content_data> try_get_resource_content(res_hash res, bool start_computation_if_not_found = true);
+    // NOTE: can return content with is_outdated = true
+    cc::optional<content_ref> try_get_resource_content(res_hash res, bool enqueue_if_not_found = true);
 
     // invalidates all impure resources such as file timestamps or tweakable data
     // this is an extremely cheap O(1) operation
@@ -220,7 +215,7 @@ public:
     // TODO: does it make sense to expose these?
 private:
     // TODO: error states?
-    cc::optional<content_data> query_content(content_hash hash);
+    cc::optional<content_ref> query_content(content_hash hash);
 
     // TODO: error states?
     // TODO: version that can move data?
@@ -230,7 +225,15 @@ private:
     invoc_hash define_invocation(comp_hash const& computation, cc::span<content_hash const> args);
 
     // TODO: error states?
-    cc::optional<invoc_result> query_invocation(invoc_hash hash, bool try_query_data = true);
+    // cc::optional<invoc_result> query_invocation(invoc_hash hash, bool try_query_data = true);
+
+    // NOTE: never returns outdated data
+    cc::optional<content_hash> try_get_resource_content_hash(res_hash res, bool enqueue_if_not_found = true);
+
+    // queue processing
+private:
+    // returns true if one task was processed
+    bool impl_process_queue_res(bool need_content);
 
 private:
     // all complex implementation is pimpl'd to keep the header clean
