@@ -1,7 +1,6 @@
 #pragma once
 
 #include <clean-core/string.hh>
-#include <clean-core/vector.hh>
 
 #include <resource-system/fwd.hh>
 
@@ -10,8 +9,11 @@ namespace res
 enum class error_type
 {
     unknown,
+    /// the resource computation indicated an error
     user,
+    /// any dependency had an error
     missing_resource,
+    /// the resource computation threw an exception
     exception,
 };
 
@@ -35,7 +37,6 @@ struct error
 {
     error_type type = error_type::unknown;
     cc::string description;
-    cc::vector<detail::resource*> deps; // for missing resources
 
     static error from_user(cc::string desc)
     {
@@ -51,5 +52,7 @@ struct error
         e.description = cc::move(desc);
         return e;
     }
+
+    cc::string to_string() const;
 };
-}
+} // namespace res

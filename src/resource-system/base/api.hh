@@ -14,6 +14,8 @@
 // for atomic_add
 #include <clean-core/intrinsics.hh>
 
+#include <resource-system/base/hash.hh>
+
 // [hash based resource system]
 // this file contains the base API to create and manage resources
 // everything not in base/ is the "porcelain" part of the resource API
@@ -64,32 +66,6 @@
 namespace res::base
 {
 
-// see https://en.wikipedia.org/wiki/Birthday_problem#Probability_table
-// - 128 bit hash
-// - 10^10 objects in the database
-// - 10^-18 probability of at least one collision
-struct alignas(16) hash
-{
-    uint64_t w0;
-    uint64_t w1;
-
-    constexpr bool operator==(hash const& h) const { return w0 == h.w0 && w1 == h.w1; }
-    constexpr bool operator!=(hash const& h) const { return w0 != h.w0 || w1 != h.w1; }
-};
-
-struct comp_hash : hash
-{
-};
-struct res_hash : hash
-{
-};
-struct content_hash : hash
-{
-};
-struct invoc_hash : hash
-{
-};
-
 struct alignas(64) ref_count
 {
     int count = 1;
@@ -114,7 +90,7 @@ struct content_ref
     // it's still accessible but will change in the future
     bool is_outdated = false;
 
-    void* data_ptr = nullptr;
+    void const* data_ptr = nullptr;
 
     // TODO: more elaborate error type?
     cc::string_view error_msg;
@@ -184,6 +160,7 @@ struct computation_desc
 ///       can be done by returning pointers to an atomic int
 class ResourceSystem
 {
+public:
     ResourceSystem();
     ~ResourceSystem();
 

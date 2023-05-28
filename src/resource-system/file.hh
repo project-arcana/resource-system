@@ -4,8 +4,8 @@
 #include <clean-core/string_view.hh>
 #include <clean-core/unique_ptr.hh>
 
-#include <resource-system/Node.hh>
 #include <resource-system/define.hh>
+#include <resource-system/meta.hh>
 #include <resource-system/result.hh>
 #include <resource-system/tags.hh>
 
@@ -20,15 +20,15 @@ class FileNode;
 ///
 /// usage:
 ///
-///   auto f0 = res::define(res::file, "/path/to/res");              -- returns array of bytes
-///   auto f1 = res::define(res::file, "/path/to/res", res::binary); -- same as before
-///   auto f2 = res::define(res::file, "/path/to/res", res::ascii);  -- returns a string
+///   auto f0 = res::define("/path/to/res", res::file);              -- returns array of bytes
+///   auto f1 = res::define("/path/to/res", res::file, res::binary); -- same as before
+///   auto f2 = res::define("/path/to/res", res::file, res::ascii);  -- returns a string
 ///
 /// similarly, can be used to access resources from a virtual file system
 ///
 extern FileNode file;
 
-class FileNode : public Node
+class FileNode
 {
 public:
     FileNode();
@@ -44,9 +44,17 @@ public:
     // TODO:
     //  - support for virtual files
     //  - support for search paths
-    result<cc::array<std::byte>> execute(detail::resource& r, cc::string_view filename) const;
-    result<cc::array<std::byte>> execute(detail::resource& r, cc::string_view filename, binary_tag) const;
-    result<cc::string> execute(detail::resource& r, cc::string_view filename, text_tag) const;
+    result<cc::array<std::byte>> execute(cc::string_view filename) const;
+    result<cc::array<std::byte>> execute(cc::string_view filename, binary_tag) const;
+    result<cc::string> execute(cc::string_view filename, text_tag) const;
+
+    template <class... Args>
+    auto define_resource(cc::string_view name, Args&&... args)
+    {
+        // TODO impure part
+        return detail::define_res_via_lambda(
+            name, detail::res_type::normal, [](auto&&... args) { return file.execute(args...); }, name, cc::forward<Args>(args)...);
+    }
 
 private:
     bool _hot_reload_enabled =
@@ -61,6 +69,12 @@ private:
     cc::unique_ptr<state> _state;
 
     // TODO: disable hot reloading for deleted resources
-    void enable_hot_reloading_for(detail::resource& r, cc::string_view filename) const;
+    void enable_hot_reloading_for(cc::string_view filename) const;
 };
-}
+
+template <>
+struct node_traits<FileNode>
+{
+    static constexpr bool is_node = true;
+};
+} // namespace res

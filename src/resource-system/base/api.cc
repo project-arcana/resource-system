@@ -10,9 +10,18 @@
 
 #include <rich-log/log.hh>
 
+#include <resource-system/detail/hash_helper.hh>
 #include <resource-system/detail/log.hh>
 
 #include <shared_mutex>
+
+#define ENABLE_VERBOSE_LOG 1
+
+#if ENABLE_VERBOSE_LOG
+#define LOG_VERBOSE(...) LOG(__VA_ARGS__)
+#else
+#define LOG_VERBOSE(...) CC_FORCE_SEMICOLON
+#endif
 
 namespace res::base
 {
@@ -21,14 +30,14 @@ namespace
 cc::string shorthash(hash const& h)
 {
     auto p = reinterpret_cast<uint8_t const*>(&h);
-    auto constexpr size = 8;
+    auto constexpr size = 6;
     static constexpr auto hex = "0123456789ABCDEF";
     auto s = cc::string::uninitialized(size * 2 + 2);
     for (auto i = 0; i < size; ++i)
     {
         auto v = *p++;
-        s[i * 2 + 1] = hex[v / 8];
-        s[i * 2 + 2] = hex[v % 8];
+        s[i * 2 + 1] = hex[v / 16];
+        s[i * 2 + 2] = hex[v % 16];
     }
     s.front() = '[';
     s.back() = ']';
@@ -92,21 +101,6 @@ struct invoc_desc
     content_hash content;
 };
 
-struct res_hash_hasher
-{
-    size_t operator()(res::base::hash const& h) const { return h.w0; }
-};
-
-template <class HashT>
-HashT finalize_as(cc::sha1_builder& b)
-{
-    auto sha1_value = b.finalize();
-    static_assert(sizeof(sha1_value) >= sizeof(HashT));
-    HashT hash;
-    std::memcpy(&hash, &sha1_value, sizeof(hash));
-    return hash;
-}
-
 content_hash make_content_hash(computation_result const& res, invoc_hash invoc)
 {
     cc::sha1_builder sha1;
@@ -126,7 +120,7 @@ content_hash make_content_hash(computation_result const& res, invoc_hash invoc)
         sha1.add(cc::as_byte_span(uint32_t(3000)));
         sha1.add(cc::as_byte_span(invoc));
     }
-    return finalize_as<content_hash>(sha1);
+    return detail::finalize_as<content_hash>(sha1);
 }
 
 // NOTE: these are threadsafe via reader/writer lock
@@ -190,7 +184,7 @@ struct MemoryStore
     }
 
 private:
-    cc::map<HashT, ValueT, res_hash_hasher> _data;
+    cc::map<HashT, ValueT> _data;
     std::shared_mutex _mutex;
 };
 } // namespace
@@ -230,7 +224,7 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
     sha1.add(cc::as_byte_span(desc.name));
     sha1.add(cc::as_byte_span(desc.algo_hash));
     // TODO: args?
-    auto const hash = finalize_as<comp_hash>(sha1);
+    auto const hash = detail::finalize_as<comp_hash>(sha1);
 
     // read: check if comp already known
     auto has_val = m->comp_store.get(hash,
@@ -243,7 +237,10 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
 
     // write: add to map
     if (!has_val)
+    {
+        LOG_VERBOSE("comp %s defined", shorthash(hash));
         m->comp_store.set(hash, cc::move(desc));
+    }
 
     return hash;
 }
@@ -257,7 +254,7 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
     sha1.add(cc::as_byte_span(computation));
     for (auto const& h : args)
         sha1.add(cc::as_byte_span(h));
-    auto const hash = finalize_as<res_hash>(sha1);
+    auto const hash = detail::finalize_as<res_hash>(sha1);
 
     // read: check if comp already known
     auto has_val = m->res_store.get(hash,
@@ -279,6 +276,8 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
         desc.args.push_back_range(args);
         desc.ref_counter = cc::alloc<ref_count>();
         counter = desc.ref_counter;
+
+        LOG_VERBOSE("res %s defined", shorthash(hash));
 
         m->res_store.set(hash, cc::move(desc));
     }
@@ -350,6 +349,7 @@ cc::optional<res::base::content_ref> res::base::ResourceSystem::try_get_resource
         // actually enqueue
         if (need_enqueue)
         {
+            LOG_VERBOSE("res %s enqueued for content", shorthash(res));
             auto lock = std::lock_guard{m->queue_compute_content_of_resource_mutex};
             m->queue_compute_content_of_resource.push_back(res);
         }
@@ -406,6 +406,7 @@ cc::optional<res::base::content_hash> res::base::ResourceSystem::try_get_resourc
         // actually enqueue
         if (need_enqueue)
         {
+            LOG_VERBOSE("res %s enqueued for hash", shorthash(res));
             auto lock = std::lock_guard{m->queue_compute_content_hash_of_resource_mutex};
             m->queue_compute_content_hash_of_resource.push_back(res);
         }
@@ -430,7 +431,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     // get job
     {
         auto lock = std::lock_guard{queue_mutex};
-        if (!queue.empty())
+        if (queue.empty())
             return false;
 
         res = queue.pop_front();
@@ -439,6 +440,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     // process
     //   we have a resource "res"
     //   and want to know the content hash for it
+    LOG("res %s processing...", shorthash(res));
 
     // 1. get comp + arg res_hashes
     //   (can check if resource already up to date)
@@ -477,6 +479,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     // not all args available? requeue
     if (!has_all_arg_hashes)
     {
+        LOG_VERBOSE("res %s requeue because not all arg hashes are available", shorthash(res));
         auto lock = std::lock_guard{queue_mutex};
         queue.push_back(res);
         return true;
@@ -501,6 +504,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
 
         if (!need_content || content_data.has_value())
         {
+            LOG_VERBOSE("res %s found invoc %s (%s content %s) in cache", shorthash(res), shorthash(invoc), need_content ? "and" : "hash", shorthash(content_hash));
             auto ok = m->res_store.modify(res,
                                           [&](res_desc& desc)
                                           {
@@ -535,6 +539,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     // not all args available? requeue
     if (!has_all_arg_content)
     {
+        LOG_VERBOSE("res %s requeue because not all arg contents are available", shorthash(res));
         auto lock = std::lock_guard{queue_mutex};
         queue.push_back(res);
         return true;
@@ -550,7 +555,9 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
         // actual resource computation
         // TODO: indirection
         // TODO: split computation, ...
+        LOG_VERBOSE("res %s compute content", shorthash(res));
         auto comp_result = compute_resource(args_content);
+        CC_ASSERT(comp_result.error_data.has_value() || comp_result.runtime_data.has_value());
 
         auto content_hash = make_content_hash(comp_result, invoc);
 
@@ -574,6 +581,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
                                               desc.content_data = content_data;
                                           });
         CC_ASSERT(res_ok && "overzealous GC?");
+        LOG_VERBOSE("res %s has fully defined content", shorthash(res));
     }
 
     return true;
@@ -612,5 +620,5 @@ res::base::invoc_hash res::base::ResourceSystem::define_invocation(comp_hash con
     sha1.add(cc::as_byte_span(computation));
     for (auto const& h : args)
         sha1.add(cc::as_byte_span(h));
-    return finalize_as<invoc_hash>(sha1);
+    return detail::finalize_as<invoc_hash>(sha1);
 }

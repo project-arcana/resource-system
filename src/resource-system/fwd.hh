@@ -17,6 +17,16 @@ class System;
 
 namespace detail
 {
-struct resource;
+struct resource_slot;
 }
-}
+
+namespace base
+{
+struct comp_hash;
+struct res_hash;
+struct content_hash;
+struct invoc_hash;
+
+class ResourceSystem;
+} // namespace base
+} // namespace res

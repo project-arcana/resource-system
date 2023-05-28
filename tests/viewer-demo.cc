@@ -21,11 +21,10 @@ APP("viewer resource demo")
         float step_y = 1.f;
 
         bool emit_lines = true;
-    };
-
-    auto params = res::create(grid_params{});
+    } params;
 
     auto renderables = res::load(
+        "make_grid_renderables",
         [](grid_params p)
         {
             auto c = gv::canvas();
@@ -72,23 +71,20 @@ APP("viewer resource demo")
 
             return c.create_renderables();
         },
-        params);
+        res::define_impure("params", [&params] { return params; }));
 
     gv::interactive(
         [&]
         {
             // UI
-            params.try_update(
-                [&](grid_params& p)
-                {
-                    auto changed = false;
-                    changed |= ImGui::SliderFloat("step x", &p.step_x, 0.1f, 2.f);
-                    changed |= ImGui::SliderFloat("step y", &p.step_y, 0.1f, 2.f);
-                    changed |= ImGui::SliderInt("size x", &p.size_x, 1, 32);
-                    changed |= ImGui::SliderInt("size y", &p.size_y, 1, 32);
-                    changed |= ImGui::Checkbox("show lines", &p.emit_lines);
-                    return changed;
-                });
+            auto changed = false;
+            changed |= ImGui::SliderFloat("step x", &params.step_x, 0.1f, 2.f);
+            changed |= ImGui::SliderFloat("step y", &params.step_y, 0.1f, 2.f);
+            changed |= ImGui::SliderInt("size x", &params.size_x, 1, 32);
+            changed |= ImGui::SliderInt("size y", &params.size_y, 1, 32);
+            changed |= ImGui::Checkbox("show lines", &params.emit_lines);
+            if (changed)
+                res::system().invalidate_impure_resources();
 
             // process graph
             res::system().process_all();

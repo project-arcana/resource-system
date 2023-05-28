@@ -1,12 +1,21 @@
 #include "System.hh"
 
+#include <shared_mutex>
+
 #include <clean-core/assert.hh>
+#include <clean-core/map.hh>
 #include <clean-core/vector.hh>
 
 #include <resource-system/define.hh>
-#include <resource-system/detail/resource.hh>
+#include <resource-system/detail/resource_slot.hh>
 #include <resource-system/file.hh>
 #include <resource-system/handle.hh>
+
+struct res::System::pimpl
+{
+    std::shared_mutex res_slots_mutex;
+    cc::map<base::res_hash, detail::resource_slot> res_slots;
+};
 
 res::System& res::system()
 {
@@ -14,97 +23,78 @@ res::System& res::system()
     return system;
 }
 
-bool res::detail::resource_is_loaded_no_error(resource const& r) { return r.is_loaded && !r.is_error(); }
+bool res::detail::resource_is_loaded_no_error(resource_slot const& r) { return r.cached_value != nullptr; }
 
-bool res::detail::resource_try_load(resource& r)
+res::base::res_hash res::detail::resource_get_hash(resource_slot& r) { return r.resource; }
+
+res::detail::resource_slot* res::detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args)
 {
-    if (r.is_loaded)
-        return true;
+    auto& system = res::system();
+    auto& base = system.base();
 
-    system().trigger_load(r);
-    return false;
-}
+    auto comp = base.define_computation(cc::move(desc));
+    auto [res, counter] = base.define_resource(comp, args);
 
-void const* res::detail::resource_get(resource const& r)
-{
-    CC_ASSERT(r.is_loaded && "resource not loaded. did you forget to call try_load? or do you want to use try_get?");
-    return r.data;
-}
+    auto& mutex = system.m->res_slots_mutex;
+    auto& slots = system.m->res_slots;
 
-void const* res::detail::resource_try_get(resource& r)
-{
-    resource_try_load(r);
-    return r.data; // is nullptr if not loaded
-}
+    mutex.lock_shared();
+    auto p_slot = slots.get_ptr(res);
+    mutex.unlock_shared();
 
-void res::detail::resource_invalidate_dependers(detail::resource& r)
-{
-    // TODO: threadsafe!
-    for (auto rr : r.dependers)
+    // found slot
+    if (p_slot)
+        return p_slot;
+
+    // prepare resource
+    resource_slot slot;
+    slot.system = &system;
+    slot.resource = res;
+    slot.resource_ref_count = counter;
+
+    // write to db
+    mutex.lock();
+    // need to check again
+    p_slot = slots.get_ptr(res);
+    if (!p_slot)
     {
-        if (!rr->is_loaded)
-            continue;
-
-        rr->is_loaded = false;
-        resource_invalidate_dependers(*rr);
+        p_slot = &slots[res];
+        *p_slot = slot;
     }
+    mutex.unlock();
+
+    return p_slot;
 }
 
-void res::System::trigger_load(res::detail::resource& r)
+void const* res::detail::resource_try_get(resource_slot& r)
 {
-    // TODO: threadsafe!
-    resources_to_load.add(&r);
-}
+    // TODO: does this function need special threadsafety considerations?
+    //    -> we are working with basically immutable values
 
-void res::System::process_all()
-{
-    // TODO: threadsafe!
+    auto& base = r.system->base();
 
-    // check for changes
-    res::file.check_hot_reloading();
+    // fastest path: valid cached value
+    if (base.is_up_to_date(r.cached_gen))
+        return r.cached_value; // might be nullptr
 
-    // check for need-to-loads
-    cc::vector<detail::resource*> res;
-
-    while (!resources_to_load.empty())
+    // otherwise, try to get data
+    auto data = base.try_get_resource_content(r.resource);
+    if (data.has_value())
     {
-        // copy all resources to local vector
-        res.clear();
-        res.reserve(resources_to_load.size());
-
-        for (auto r : resources_to_load)
-            if (!r->is_loaded) // can already be loaded due to dependency chains
-                res.push_back(r);
-
-        resources_to_load.clear();
-
-        // process resources (might create new ones to load)
-        for (auto r : res)
-        {
-            // CC_ASSERT(!r->data && "should never happen"); --- can happen during reload
-            CC_ASSERT(r->node && "must have a node to load resource");
-
-            // check if deps are available
-            auto can_load = true;
-            for (auto d : r->dependencies)
-                if (!d->is_loaded)
-                {
-                    resources_to_load.add(d);
-                    can_load = false;
-                }
-
-            // .. if not: try next round
-            if (!can_load)
-            {
-                resources_to_load.add(r);
-                continue;
-            }
-
-            // TODO: some nodes might have their own execution
-            r->node->load(*r);
-
-            // TODO: failable resource load?
-            CC_ASSERT(r->is_loaded && "node load should never fail");
-        }
+        r.cached_value = data.value().data_ptr;
+        r.cached_gen = data.value().generation;
     }
+
+    return r.cached_value; // is nullptr if not loaded
+}
+
+void res::System::process_all() { base_system.process_all(); }
+
+void res::System::invalidate_impure_resources() { base_system.invalidate_impure_resources(); }
+
+res::System::System() { m = cc::make_unique<pimpl>(); }
+
+res::System::~System()
+{
+    // TODO
 }

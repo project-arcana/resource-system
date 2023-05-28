@@ -1,9 +1,14 @@
 #pragma once
 
-#include <clean-core/set.hh>
+#include <clean-core/unique_ptr.hh>
 
-#include <resource-system/Node.hh>
-#include <resource-system/detail/resource.hh>
+#include <resource-system/base/api.hh>
+#include <resource-system/fwd.hh>
+
+namespace res::detail
+{
+detail::resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args);
+}
 
 namespace res
 {
@@ -16,13 +21,25 @@ System& system();
 class System
 {
 public:
-    void trigger_load(detail::resource& r);
-
     /// processes all resources that must be loaded
     /// NOTE: this API is WIP
     void process_all();
 
+    base::ResourceSystem& base() { return base_system; }
+    base::ResourceSystem const& base() const { return base_system; }
+
+    void invalidate_impure_resources();
+
+    System();
+    ~System();
+
 private:
-    cc::set<detail::resource*> resources_to_load;
+    base::ResourceSystem base_system;
+
+    // TODO: pimpl?
+    struct pimpl;
+    cc::unique_ptr<pimpl> m;
+
+    friend detail::resource_slot* detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args);
 };
-}
+} // namespace res

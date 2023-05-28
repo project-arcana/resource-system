@@ -20,8 +20,8 @@ template <class... Args>
 void view(Args const&...)
 {
 }
-}
-}
+} // namespace pv
+} // namespace
 
 APP("resource API")
 {
@@ -73,12 +73,6 @@ APP("resource API")
         // return promise<T> with callback
     }
 
-    // persistent caching via res::node and explicit names
-    {
-        auto f = res::node("bla 0.1", []() { return 0; });
-        auto h = res::define(f);
-    }
-
     // viewer computation graph
     {
         struct Mesh
@@ -94,10 +88,12 @@ APP("resource API")
         {
             return {}; // create renderable
         };
+        static_assert(std::is_trivially_copyable_v<decltype(make_renderable)>);
 
         res::handle<float> param = res::create(0.0f);
 
         res::handle<Mesh> meshA = res::define(
+            "meshA",
             [](float p)
             {
                 (void)p;       // use parameter
@@ -106,14 +102,15 @@ APP("resource API")
             param);
 
         res::handle<Mesh> meshB = res::define(
+            "meshB",
             [](Mesh const&)
             {
                 return Mesh(); // do something with input
             },
             meshA);
 
-        res::handle<Renderable> rA = res::define(make_renderable, meshA);
-        res::handle<Renderable> rB = res::define(make_renderable, meshB);
+        res::handle<Renderable> rA = res::define("make_renderable", make_renderable, meshA);
+        res::handle<Renderable> rB = res::define("make_renderable", make_renderable, meshB);
 
         pv::interactive(
             [&]

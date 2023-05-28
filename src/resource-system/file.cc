@@ -7,19 +7,14 @@
 
 #include <babel-serializer/file.hh>
 
+#include <resource-system/System.hh>
 #include <resource-system/define.hh>
 
 res::FileNode res::file;
 
 struct res::FileNode::state
 {
-    struct reload_info
-    {
-        cc::filewatch filewatch;
-        cc::string filename;
-    };
-
-    cc::map<detail::resource*, reload_info> reloads;
+    cc::map<cc::string, cc::filewatch> reloads;
 };
 
 res::FileNode::FileNode() { _state = cc::make_unique<state>(); }
@@ -28,27 +23,26 @@ void res::FileNode::set_hot_reloading(bool enabled) { _hot_reload_enabled = enab
 
 void res::FileNode::check_hot_reloading()
 {
-    for (auto const& [r, ri] : _state->reloads)
-        if (ri.filewatch.has_changed())
+    for (auto&& [fname, fwatch] : _state->reloads)
+        if (fwatch.has_changed())
         {
-            LOG("file '%s' has changed and is invalidated", ri.filename);
+            LOG("file '%s' has changed and is invalidated", fname);
 
             // invalidate
-            r->is_loaded = false;
-            detail::resource_invalidate_dependers(*r);
+            res::system().base().invalidate_impure_resources();
 
             // clear filewatch
-            ri.filewatch.set_unchanged();
+            fwatch.set_unchanged();
         }
 }
 
-res::result<cc::array<std::byte>> res::FileNode::execute(detail::resource& r, cc::string_view filename) const
+res::result<cc::array<std::byte>> res::FileNode::execute(cc::string_view filename) const
 {
     //
-    return this->execute(r, filename, res::binary);
+    return this->execute(filename, res::binary);
 }
 
-res::result<cc::array<std::byte>> res::FileNode::execute(detail::resource& r, cc::string_view filename, binary_tag) const
+res::result<cc::array<std::byte>> res::FileNode::execute(cc::string_view filename, binary_tag) const
 {
     LOG("loading binary file '%s'", filename);
 
@@ -58,11 +52,11 @@ res::result<cc::array<std::byte>> res::FileNode::execute(detail::resource& r, cc
         return error::from_user(cc::format("file '%s' does not exist", filename));
     }
 
-    enable_hot_reloading_for(r, filename);
+    enable_hot_reloading_for(filename);
     return babel::file::read_all_bytes(filename);
 }
 
-res::result<cc::string> res::FileNode::execute(detail::resource& r, cc::string_view filename, text_tag) const
+res::result<cc::string> res::FileNode::execute(cc::string_view filename, text_tag) const
 {
     LOG("loading ascii file '%s'", filename);
 
@@ -72,19 +66,18 @@ res::result<cc::string> res::FileNode::execute(detail::resource& r, cc::string_v
         return error::from_user(cc::format("file '%s' does not exist", filename));
     }
 
-    enable_hot_reloading_for(r, filename);
+    enable_hot_reloading_for(filename);
     return babel::file::read_all_text(filename);
 }
 
-void res::FileNode::enable_hot_reloading_for(detail::resource& r, cc::string_view filename) const
+void res::FileNode::enable_hot_reloading_for(cc::string_view filename) const
 {
     if (!_hot_reload_enabled)
         return;
 
-    auto& ri = _state->reloads[&r];
-    if (ri.filewatch.is_valid())
+    auto& fwatch = _state->reloads[filename];
+    if (fwatch.is_valid())
         return;
 
-    ri.filename = filename;
-    ri.filewatch = cc::filewatch::create(filename);
+    fwatch = cc::filewatch::create(filename);
 }
