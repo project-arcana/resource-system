@@ -73,7 +73,7 @@ struct count_resource_handles
 {
     enum
     {
-        value = (0 + ... + int(is_handle<Args>::value))
+        value = (0 + ... + int(is_handle<std::decay_t<Args>>::value))
     };
 };
 
@@ -157,7 +157,7 @@ auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args
     using ResourceT = resolve_resource_type_of<ResultT>;
 
     // collect resource handles
-    auto constexpr res_arg_count = count_resource_handles<Args...>::value;
+    auto constexpr res_arg_count = int(count_resource_handles<Args...>::value);
     base::res_hash res_args[res_arg_count > 0 ? res_arg_count : 1]; // the max(1,..) is to prevent zero sized arrays
     base::res_hash* p_res_args = res_args;
     (detail::add_resource_to_args(p_res_args, args), ...);
@@ -171,8 +171,8 @@ auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args
     base::computation_desc comp_desc;
     comp_desc.name = name;
     comp_desc.algo_hash = detail::finalize_as<base::hash>(sha1);
-    comp_desc.compute_resource = [fun = cc::move(fun),                                   //
-                                  arg_tuple = cc::tuple<std::decay_t<Args>...>(args...)] //
+    comp_desc.compute_resource = [fun = cc::move(fun),                                                      //
+                                  arg_tuple = cc::tuple<std::decay_t<Args>...>(cc::forward<Args>(args)...)] //
         (cc::span<base::content_ref const> res_args) -> base::computation_result
     {
         base::computation_result res;

@@ -470,7 +470,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     args_content_hashes.resize(args.size());
     for (auto i : cc::indices_of(args))
     {
-        if (auto arg_hash = this->try_get_resource_content_hash(res); arg_hash.has_value())
+        if (auto arg_hash = this->try_get_resource_content_hash(args[i]); arg_hash.has_value())
             args_content_hashes[i] = arg_hash.value();
         else
             has_all_arg_hashes = false;
@@ -529,7 +529,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     for (auto i : cc::indices_of(args))
     {
         // NOTE: outdated counts as invalid here
-        if (auto arg_content = this->try_get_resource_content(res); //
+        if (auto arg_content = this->try_get_resource_content(args[i]); //
             arg_content.has_value() && !arg_content.value().is_outdated)
             args_content[i] = arg_content.value();
         else
@@ -596,6 +596,9 @@ void res::base::ResourceSystem::invalidate_impure_resources()
 
 void res::base::ResourceSystem::process_all()
 {
+    // DEBUG
+    auto max_tries = 10;
+
     // not locked because this is fine to be approximative
     while (!m->queue_compute_content_of_resource.empty() || !m->queue_compute_content_hash_of_resource.empty())
     {
@@ -606,6 +609,9 @@ void res::base::ResourceSystem::process_all()
         // then compute actual contents
         if (!m->queue_compute_content_of_resource.empty())
             impl_process_queue_res(true);
+
+        if (max_tries-- < 0)
+            break;
     }
 }
 

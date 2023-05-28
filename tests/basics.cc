@@ -15,8 +15,8 @@ TEST("res explicit resource")
 
     res::system().process_all();
 
-    CHECK(h.is_loaded());
     CHECK(h.try_get() != nullptr);
+    CHECK(h.is_loaded()); // after try_get
     CHECK(*h.try_get() == 7);
 }
 
@@ -37,8 +37,8 @@ TEST("res simple define")
 
     res::system().process_all();
 
-    CHECK(h.is_loaded());
     CHECK(*h.try_get() == 3);
+    CHECK(h.is_loaded()); // after try_get
 }
 
 TEST("res dependent define")

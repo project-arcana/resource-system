@@ -42,6 +42,7 @@ struct handle
 
     /// true if the resource can be used immediately
     /// NOTE: also implies error-free
+    /// NOTE: this will only be updated after a try_get!
     /// TODO: this will also be true if an outdated version is cached
     bool is_loaded() const
     {
