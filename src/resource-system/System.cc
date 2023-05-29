@@ -27,13 +27,18 @@ bool res::detail::resource_is_loaded_no_error(resource_slot const& r) { return r
 
 res::base::res_hash res::detail::resource_get_hash(resource_slot& r) { return r.resource; }
 
-res::detail::resource_slot* res::detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args)
+res::detail::resource_slot* res::detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_impure)
 {
     auto& system = res::system();
     auto& base = system.base();
 
     auto comp = base.define_computation(cc::move(desc));
-    auto [res, counter] = base.define_resource(comp, args);
+
+    base::resource_desc rdesc;
+    rdesc.computation = comp;
+    rdesc.args = args;
+    rdesc.is_impure = is_impure;
+    auto [res, counter] = base.define_resource(rdesc);
 
     auto& mutex = system.m->res_slots_mutex;
     auto& slots = system.m->res_slots;

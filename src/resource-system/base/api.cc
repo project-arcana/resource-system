@@ -15,7 +15,7 @@
 
 #include <shared_mutex>
 
-#define ENABLE_VERBOSE_LOG 1
+#define ENABLE_VERBOSE_LOG 0
 
 #if ENABLE_VERBOSE_LOG
 #define LOG_VERBOSE(...) LOG(__VA_ARGS__)
@@ -49,6 +49,8 @@ struct res_desc
 {
     comp_hash comp;
     cc::vector<res_hash> args;
+
+    bool is_impure = false;
 
     // NOTE: this only tracks external references
     //       internal references are part of the GC process
@@ -85,6 +87,8 @@ struct content_desc
         else
         {
             CC_ASSERT(content.runtime_data.has_value() && "TODO: implement deserialization");
+            // either here or directly on load
+            // NOTE: the computation knows how to deserialize values so the actual location is not that clear
             r.data_ptr = content.runtime_data.value().data_ptr;
         }
         return r;
@@ -101,7 +105,7 @@ struct invoc_desc
     content_hash content;
 };
 
-content_hash make_content_hash(computation_result const& res, invoc_hash invoc)
+content_hash make_content_hash(computation_result const& res, invoc_hash invoc, cc::function_ptr<content_hash(void const*)> make_hash, bool is_impure)
 {
     cc::sha1_builder sha1;
     if (res.serialized_data.has_value()) // normal case
@@ -114,11 +118,21 @@ content_hash make_content_hash(computation_result const& res, invoc_hash invoc)
         sha1.add(cc::as_byte_span(uint32_t(2000)));
         sha1.add(cc::as_byte_span(res.error_data.value().message));
     }
-    else // non-serializable case
+    else if (res.runtime_data.has_value() && make_hash) // non-serializable BUT hashable case
+    {
+        sha1.add(cc::as_byte_span(uint32_t(4000)));
+        sha1.add(cc::as_byte_span(make_hash(res.runtime_data.value().data_ptr)));
+    }
+    else // non-serializable + non-hashable case
     {
         CC_ASSERT(res.runtime_data.has_value());
-        sha1.add(cc::as_byte_span(uint32_t(3000)));
+        sha1.add(cc::as_byte_span(uint32_t(4000)));
         sha1.add(cc::as_byte_span(invoc));
+
+        // impure + non-serializable means we have no idea what the content is
+        // thus we add a basically random value to the hash
+        if (is_impure)
+            sha1.add(cc::as_byte_span(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
     }
     return detail::finalize_as<content_hash>(sha1);
 }
@@ -245,14 +259,14 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
     return hash;
 }
 
-cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::define_resource(comp_hash const& computation, cc::span<res_hash const> args)
+cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::define_resource(resource_desc const& desc)
 {
     ref_count* counter = nullptr;
 
     // make hash
     cc::sha1_builder sha1;
-    sha1.add(cc::as_byte_span(computation));
-    for (auto const& h : args)
+    sha1.add(cc::as_byte_span(desc.computation));
+    for (auto const& h : desc.args)
         sha1.add(cc::as_byte_span(h));
     auto const hash = detail::finalize_as<res_hash>(sha1);
 
@@ -260,10 +274,10 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
     auto has_val = m->res_store.get(hash,
                                     [&](res_desc const& prev_desc)
                                     {
-                                        CC_ASSERT(computation == prev_desc.comp && "res_hash collision");
-                                        CC_ASSERT(args.size() == prev_desc.args.size() && "res_hash collision");
-                                        for (auto i : cc::indices_of(args))
-                                            CC_ASSERT(args[i] == prev_desc.args[i] && "res_hash collision");
+                                        CC_ASSERT(desc.computation == prev_desc.comp && "res_hash collision");
+                                        CC_ASSERT(desc.args.size() == prev_desc.args.size() && "res_hash collision");
+                                        for (auto i : cc::indices_of(desc.args))
+                                            CC_ASSERT(desc.args[i] == prev_desc.args[i] && "res_hash collision");
 
                                         counter = prev_desc.ref_counter;
                                     });
@@ -271,15 +285,25 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
     // write: add to map
     if (!has_val)
     {
-        res_desc desc;
-        desc.comp = computation;
-        desc.args.push_back_range(args);
-        desc.ref_counter = cc::alloc<ref_count>();
-        counter = desc.ref_counter;
+        res_desc rdesc;
+        rdesc.comp = desc.computation;
+        rdesc.args.push_back_range(desc.args);
+        rdesc.is_impure = desc.is_impure;
+        rdesc.ref_counter = cc::alloc<ref_count>();
+        counter = rdesc.ref_counter;
 
-        LOG_VERBOSE("res %s defined", shorthash(hash));
+#if ENABLE_VERBOSE_LOG
+        cc::string deps;
+        for (auto a : desc.args)
+        {
+            if (!deps.empty())
+                deps += ", ";
+            deps += shorthash(a);
+        }
+        LOG_VERBOSE("res %s defined, deps [%s]", shorthash(hash), deps);
+#endif
 
-        m->res_store.set(hash, cc::move(desc));
+        m->res_store.set(hash, cc::move(rdesc));
     }
 
     CC_ASSERT(counter != nullptr);
@@ -304,6 +328,7 @@ cc::optional<res::base::content_ref> res::base::ResourceSystem::try_get_resource
                                                  // we guarantee that this is the stored data
                                                  CC_ASSERT(desc.content_data.has_value());
                                                  result = desc.content_data;
+                                                 return;
                                              }
                                              else
                                              {
@@ -319,6 +344,7 @@ cc::optional<res::base::content_ref> res::base::ResourceSystem::try_get_resource
                                              if (desc.content_data.has_value())
                                              {
                                                  auto content = desc.content_data.value();
+                                                 LOG_VERBOSE("returning outdated content for %s", shorthash(res));
                                                  content.is_outdated = true;
                                                  result = content;
                                              }
@@ -440,12 +466,13 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     // process
     //   we have a resource "res"
     //   and want to know the content hash for it
-    LOG("res %s processing...", shorthash(res));
+    // LOG("res %s processing...", shorthash(res));
 
     // 1. get comp + arg res_hashes
     //   (can check if resource already up to date)
     int const gen = generation;
     auto is_up_to_date = false;
+    auto is_impure = false;
     comp_hash comp;
     auto found_res = m->res_store.get(res,
                                       [&](res_desc const& desc)
@@ -458,6 +485,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
 
                                           comp = desc.comp;
                                           args = desc.args; // copy
+                                          is_impure = desc.is_impure;
                                       });
     CC_ASSERT(found_res && "overzealous GC?");
 
@@ -487,36 +515,42 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
 
     // read cached invocation data
     auto const invoc = this->define_invocation(comp, args_content_hashes);
-    // TODO: impure resource skip this
-    auto invoc_res = m->invoc_store.get(invoc, [&](invoc_desc const& desc) { return desc.content; });
 
-    // easy path: invoc is cached, aka we immediately have the result
-    if (invoc_res.has_value())
+    // impure resources might change their content with each invocation
+    // so we cannot rely on the invoc_store for them
+    if (!is_impure)
     {
-        auto content_hash = invoc_res.value();
+        auto invoc_res = m->invoc_store.get(invoc, [&](invoc_desc const& desc) { return desc.content; });
 
-        // if we also need the content, we can ask the content store
-        // if this fails, we need to actually compute the content
-        // TODO: or ask someone who knows
-        cc::optional<content_ref> content_data;
-        if (need_content)
-            content_data = this->query_content(content_hash);
-
-        if (!need_content || content_data.has_value())
+        // easy path: invoc is cached, aka we immediately have the result
+        if (invoc_res.has_value())
         {
-            LOG_VERBOSE("res %s found invoc %s (%s content %s) in cache", shorthash(res), shorthash(invoc), need_content ? "and" : "hash", shorthash(content_hash));
-            auto ok = m->res_store.modify(res,
-                                          [&](res_desc& desc)
-                                          {
-                                              if (desc.content_gen == gen)
-                                                  return; // already up to date
+            auto content_hash = invoc_res.value();
 
-                                              desc.content_gen = gen;
-                                              desc.content_name = content_hash;
-                                              desc.content_data = content_data;
-                                          });
-            CC_ASSERT(ok && "overzealous GC?");
-            return true;
+            // if we also need the content, we can ask the content store
+            // if this fails, we need to actually compute the content
+            // TODO: or ask someone who knows
+            cc::optional<content_ref> content_data;
+            if (need_content)
+                content_data = this->query_content(content_hash);
+
+            if (!need_content || content_data.has_value())
+            {
+                LOG_VERBOSE("res %s found invoc %s (%s content %s) in cache", shorthash(res), shorthash(invoc), need_content ? "and" : "hash",
+                            shorthash(content_hash));
+                auto ok = m->res_store.modify(res,
+                                              [&](res_desc& desc)
+                                              {
+                                                  if (desc.content_gen == gen)
+                                                      return; // already up to date
+
+                                                  desc.content_gen = gen;
+                                                  desc.content_name = content_hash;
+                                                  desc.content_data = content_data;
+                                              });
+                CC_ASSERT(ok && "overzealous GC?");
+                return true;
+            }
         }
     }
 
@@ -549,7 +583,13 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     {
         // TODO: keep comp alive once this becomes an issue
         cc::function_ref<computation_result(cc::span<content_ref const>)> compute_resource;
-        auto has_comp = m->comp_store.get(comp, [&](computation_desc const& desc) { compute_resource = desc.compute_resource; });
+        cc::function_ptr<content_hash(void const*)> make_hash;
+        auto has_comp = m->comp_store.get(comp,
+                                          [&](computation_desc const& desc)
+                                          {
+                                              compute_resource = desc.compute_resource;
+                                              make_hash = desc.make_runtime_content_hash;
+                                          });
         CC_ASSERT(has_comp && "overzealous GC?");
 
         // actual resource computation
@@ -559,7 +599,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
         auto comp_result = compute_resource(args_content);
         CC_ASSERT(comp_result.error_data.has_value() || comp_result.runtime_data.has_value());
 
-        auto content_hash = make_content_hash(comp_result, invoc);
+        auto content_hash = make_content_hash(comp_result, invoc, make_hash, is_impure);
 
         // store result in content store
         m->content_store.set(content_hash, content_desc{cc::move(comp_result)});
@@ -581,7 +621,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
                                               desc.content_data = content_data;
                                           });
         CC_ASSERT(res_ok && "overzealous GC?");
-        LOG_VERBOSE("res %s has fully defined content", shorthash(res));
+        LOG_VERBOSE("res %s has fully defined content %s", shorthash(res), shorthash(content_hash));
     }
 
     return true;
@@ -597,7 +637,7 @@ void res::base::ResourceSystem::invalidate_impure_resources()
 void res::base::ResourceSystem::process_all()
 {
     // DEBUG
-    auto max_tries = 10;
+    // auto max_tries = 100;
 
     // not locked because this is fine to be approximative
     while (!m->queue_compute_content_of_resource.empty() || !m->queue_compute_content_hash_of_resource.empty())
@@ -610,8 +650,8 @@ void res::base::ResourceSystem::process_all()
         if (!m->queue_compute_content_of_resource.empty())
             impl_process_queue_res(true);
 
-        if (max_tries-- < 0)
-            break;
+        // if (max_tries-- < 0)
+        //     break;
     }
 }
 

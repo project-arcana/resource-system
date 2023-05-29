@@ -13,6 +13,9 @@ namespace res
 template <class T>
 struct result
 {
+    using value_t = T;
+    using error_t = res::error;
+
     result() = default;
     result(T v) : _data(cc::move(v)) {}
     result(res::error e) : _data(cc::move(e)) {}

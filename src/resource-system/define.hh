@@ -28,45 +28,6 @@ namespace res
 {
 namespace detail
 {
-template <class T>
-struct is_handle : std::false_type
-{
-};
-template <class T>
-struct is_handle<handle<T>> : std::true_type
-{
-};
-
-template <class T>
-struct is_result : std::false_type
-{
-};
-template <class T>
-struct is_result<result<T>> : std::true_type
-{
-};
-
-template <class T>
-struct resource_type_of_t
-{
-    using type = T;
-};
-template <class T>
-struct resource_type_of_t<result<T>>
-{
-    using type = typename resource_type_of_t<T>::type;
-};
-template <class T>
-struct resource_type_of_t<handle<T>>
-{
-    using type = typename resource_type_of_t<T>::type;
-};
-
-// int -> int
-// handle<float> -> float
-// result<bool> -> bool
-template <class T>
-using resolve_resource_type_of = typename resource_type_of_t<std::decay_t<T>>::type;
 
 template <class... Args>
 struct count_resource_handles
@@ -76,12 +37,6 @@ struct count_resource_handles
         value = (0 + ... + int(is_handle<std::decay_t<Args>>::value))
     };
 };
-
-template <class T>
-auto get_arg(base::content_ref const& content, T&& arg)
-{
-    // TODO
-}
 
 template <class T>
 void add_non_resource_to_hash(cc::sha1_builder& sha1, T const& val)
@@ -110,13 +65,30 @@ void add_resource_to_args(base::res_hash*& p_args, T const& val)
     }
 }
 
-resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args);
+resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_impure);
 
 enum class res_type
 {
     normal,
     impure,
 };
+
+template <class T>
+auto res_eval_arg_from_ptr(void const* p)
+{
+    // is reference to other resource?
+    // -> need to use runtime repr type
+    if constexpr (is_handle<T>::value)
+    {
+        return resource_traits<typename T::resource_t>::from_content_data_ptr(p);
+    }
+    // otherwise is direct arg
+    // -> just use it as-is
+    else
+    {
+        return *reinterpret_cast<T const*>(p);
+    }
+}
 
 template <class>
 struct res_evaluator;
@@ -138,9 +110,38 @@ struct res_evaluator<std::integer_sequence<size_t, I...>>
               : &cc::get<I>(direct_args)),     // otherwise we take the value from the tuple
          ...);                                 // NOTE: (,...) is needed for guaranteed order
 
-        return cc::invoke(f, *reinterpret_cast<resolve_resource_type_of<Args> const*>(ptr_args[I])...);
+        return cc::invoke(f, detail::res_eval_arg_from_ptr<std::decay_t<Args>>(ptr_args[I])...);
     }
 };
+
+template <class ResourceT , class ResultT>
+base::computation_result make_comp_result(ResultT value)
+{
+    static_assert(!is_handle<ResultT>::value, "TODO: implement indirect resources");
+
+    // result<ResourceT>
+    if constexpr (is_result<ResultT>::value)
+    {
+        if (value.has_value())
+        {
+            return detail::make_comp_result<ResourceT>(cc::move(value.value()));
+        }
+        else
+        {
+            base::computation_result res;
+            base::content_error_data err;
+            err.message = value.error().to_string();
+            res.error_data = cc::move(err);
+            return res;
+        }
+    }
+    else // just ResourceT
+    {
+        base::computation_result res;
+        resource_traits<ResourceT>::make_comp_result(res, cc::move(value));
+        return res;
+    }
+}
 
 template <class FunT, class... Args>
 auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args&&... args)
@@ -149,12 +150,12 @@ auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args
                   "callables must be POD-like, i.e. all captures must be trivial. " //
                   "non-trivial captures should be provided as function argument.");
 
-    static_assert(std::is_invocable_v<FunT, resolve_resource_type_of<Args> const&...>, //
+    static_assert(std::is_invocable_v<FunT, arg_to_resource<Args> const&...>, //
                   "function is not callable with the correct argument types");
 
-    using ResultT = std::decay_t<std::invoke_result_t<FunT, resolve_resource_type_of<Args> const&...>>;
+    using ResultT = std::decay_t<std::invoke_result_t<FunT, arg_to_resource<Args> const&...>>;
     static_assert(!is_handle<ResultT>::value, "TODO: implement indirect resources");
-    using ResourceT = resolve_resource_type_of<ResultT>;
+    using ResourceT = result_to_resource<ResultT>;
 
     // collect resource handles
     auto constexpr res_arg_count = int(count_resource_handles<Args...>::value);
@@ -167,20 +168,20 @@ auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args
     sha1.add(cc::as_byte_span(name));
     sha1.add(cc::as_byte_span(fun));
     (detail::add_non_resource_to_hash(sha1, args), ...);
+    auto const algo_hash = detail::finalize_as<base::hash>(sha1);
 
     base::computation_desc comp_desc;
     comp_desc.name = name;
-    comp_desc.algo_hash = detail::finalize_as<base::hash>(sha1);
+    comp_desc.algo_hash = algo_hash;
     comp_desc.compute_resource = [fun = cc::move(fun),                                                      //
                                   arg_tuple = cc::tuple<std::decay_t<Args>...>(cc::forward<Args>(args)...)] //
         (cc::span<base::content_ref const> res_args) -> base::computation_result
     {
-        base::computation_result res;
-
         // if any arg is missing, result is error
         for (auto const& arg : res_args)
             if (arg.has_error())
             {
+                base::computation_result res;
                 base::content_error_data err;
                 err.message = "at least one dependency had an error";
                 res.error_data = cc::move(err);
@@ -191,39 +192,12 @@ auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args
         auto eval_res = res_evaluator<std::make_index_sequence<sizeof...(Args)>> //
             ::template eval<std::decay_t<FunT>, decltype(arg_tuple), Args...>(fun, arg_tuple, res_args);
 
-        // result<ResourceT>
-        if constexpr (is_result<ResultT>::value)
-        {
-            if (eval_res.has_value())
-            {
-                base::content_runtime_data data;
-                data.data_ptr = cc::alloc<ResourceT>(cc::move(eval_res.value()));
-                data.deleter = [](void* p) { cc::free(reinterpret_cast<ResourceT*>(p)); };
-                res.runtime_data = cc::move(data);
-            }
-            else
-            {
-                base::content_error_data err;
-                err.message = eval_res.error().to_string();
-                res.error_data = cc::move(err);
-            }
-        }
-        else // just ResourceT
-        {
-            base::content_runtime_data data;
-            data.data_ptr = cc::alloc<ResourceT>(cc::move(eval_res));
-            data.deleter = [](void* p) { cc::free(reinterpret_cast<ResourceT*>(p)); };
-            res.runtime_data = cc::move(data);
-        }
-
-        // TODO: serialization
-
-        return res;
+        // unpack / convert / serialize result
+        return detail::make_comp_result<ResourceT>(eval_res);
     };
 
-    (void)type; // declare impure resource
-
-    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count));
+    auto is_impure = type == res_type::impure;
+    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_impure);
     return slot->template create_handle<ResourceT>();
 }
 
@@ -296,5 +270,23 @@ template <class NodeT, class... Args>
     auto h = res::define(name, cc::forward<NodeT>(node), cc::forward<Args>(args)...);
     h.try_get();
     return h;
+}
+
+/// helper to wrap a named function into a callable that returns handles given args
+/// i.e.
+///    auto h = res::define(name, fun, args...)
+/// is the same as
+///    auto n = res::node(name, fun);
+///    auto h = n(args...);
+///
+template <class FunT>
+auto node(cc::string_view name, FunT&& fun)
+{
+    return [name, fun](auto&&... args) { return res::define(name, fun, cc::forward<decltype(args)>(args)...); };
+}
+template <class FunT>
+auto node_impure(cc::string_view name, FunT&& fun)
+{
+    return [name, fun](auto&&... args) { return res::define_impure(name, fun, cc::forward<decltype(args)>(args)...); };
 }
 } // namespace res

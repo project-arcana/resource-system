@@ -29,6 +29,8 @@ detail::resource_slot* resource_from_handle(handle<T> const& h)
 template <class T>
 struct handle
 {
+    using resource_t = T;
+
     /// true if it points to a proper definition, i.e. not moved-out state
     bool is_valid() const { return resource != nullptr; }
 

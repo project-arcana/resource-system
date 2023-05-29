@@ -14,6 +14,7 @@
 // for atomic_add
 #include <clean-core/intrinsics.hh>
 
+#include <resource-system/base/comp_result.hh>
 #include <resource-system/base/hash.hh>
 
 // [hash based resource system]
@@ -90,6 +91,8 @@ struct content_ref
     // it's still accessible but will change in the future
     bool is_outdated = false;
 
+    // TODO: if we would have serialized_ptr + size here
+    //       we could get rid of the indirection for span/string_view
     void const* data_ptr = nullptr;
 
     // TODO: more elaborate error type?
@@ -97,27 +100,6 @@ struct content_ref
 
     bool has_value() const { return data_ptr != nullptr; }
     bool has_error() const { return data_ptr == nullptr; }
-};
-
-struct content_serialized_data
-{
-    cc::vector<std::byte> blob;
-};
-struct content_runtime_data
-{
-    void* data_ptr;
-    cc::function_ptr<void(void*)> deleter;
-};
-struct content_error_data
-{
-    cc::string message;
-};
-
-struct computation_result
-{
-    cc::optional<content_serialized_data> serialized_data;
-    cc::optional<content_runtime_data> runtime_data;
-    cc::optional<content_error_data> error_data;
 };
 
 struct computation_desc
@@ -128,23 +110,42 @@ struct computation_desc
     // NOTE: the arg content is never outdated
     cc::unique_function<computation_result(cc::span<content_ref const>)> compute_resource;
 
+    // content_ref has serialized_data and no runtime_data
+    // deserialize must set either runtime_data or error_data
+    // runtime_data is allowed to point into serialized_data
+    // this is optional
+    // NOTE: there is no serialize because that's part of compute_resource
+    cc::function_ptr<void(computation_result&)> deserialize = nullptr;
+
+    // function that computes the hash of a runtime value without needing serialization
+    // this is optional
+    cc::function_ptr<content_hash(void const*)> make_runtime_content_hash = nullptr;
+
+
     // TODO: where can this be computed?
     // TODO: is this immediate or multipart?
-    // comp metadata
-    // arg size and types
-    // return type
     // executor stuff
-    // "impure resources" (should be stored in res_desc probably)
-
-    // nonserializable resources:
-    // - content_hash = invocation_hash
-    // - no persisting
-    // - otherwise easy to support
 
     // NOTE: we want the following features
     // - computation can be done in other threads / custom queues
     // - computation can be async + multistep
     // - computation can return a resource that should be evaluated
+};
+
+struct resource_desc
+{
+    // the function to execute for this resource
+    comp_hash computation;
+
+    // all dependencies of this resource
+    cc::span<res_hash const> args;
+
+    // impure resources are assumed to change with their environment
+    // however, this is only checked whenever a global generation counter is changed
+    // impure resources are checked relatively frequently when developing
+    // so they should be extremely fast
+    // expensive computations should be guarded by a dirty flag or put into later pure resources
+    bool is_impure = false;
 };
 
 /// a resource system manages access / computation / lifetimes of resources
@@ -180,7 +181,7 @@ public:
 
     // TODO: flags for impure resources here?
     // NOTE: the returned counter is initialized with count=1
-    cc::pair<res_hash, ref_count*> define_resource(comp_hash const& computation, cc::span<res_hash const> args);
+    cc::pair<res_hash, ref_count*> define_resource(resource_desc const& desc);
 
     // NOTE: can return content with is_outdated = true
     cc::optional<content_ref> try_get_resource_content(res_hash res, bool enqueue_if_not_found = true);
