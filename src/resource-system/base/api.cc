@@ -275,9 +275,7 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
                                     [&](res_desc const& prev_desc)
                                     {
                                         CC_ASSERT(desc.computation == prev_desc.comp && "res_hash collision");
-                                        CC_ASSERT(desc.args.size() == prev_desc.args.size() && "res_hash collision");
-                                        for (auto i : cc::indices_of(desc.args))
-                                            CC_ASSERT(desc.args[i] == prev_desc.args[i] && "res_hash collision");
+                                        CC_ASSERT(desc.args.equals_content(prev_desc.args) && "res_hash collision");
 
                                         counter = prev_desc.ref_counter;
                                     });

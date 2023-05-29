@@ -66,6 +66,7 @@ TEST("res dependent define")
 TEST("res dependent define - node")
 {
     auto add = res::node("test/res-dep-def/add", [](float a, float b) { return a + b; });
+    // TODO: we prob need to add type to content hash
     auto c3 = res::create(3.0f);
     auto h0 = add(1.0f, 2.f);
     auto h1 = add(h0, 5.0f);

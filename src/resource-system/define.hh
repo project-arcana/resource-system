@@ -80,7 +80,7 @@ auto res_eval_arg_from_ptr(void const* p)
     // -> need to use runtime repr type
     if constexpr (is_handle<T>::value)
     {
-        return resource_traits<typename T::resource_t>::from_content_data_ptr(p);
+        return resource_traits<typename T::resource_t>::from_content_ref(*(base::content_ref const*)p);
     }
     // otherwise is direct arg
     // -> just use it as-is
@@ -106,7 +106,7 @@ struct res_evaluator<std::integer_sequence<size_t, I...>>
         auto p_res_args = res_args.data();
         ((*p_args++ =                          // we set each arg in order
           is_handle<std::decay_t<Args>>::value // if it's a handle
-              ? (*p_res_args++).data_ptr       // then we use the next res_arg
+              ? (void const*)p_res_args++      // then we use the next res_arg
               : &cc::get<I>(direct_args)),     // otherwise we take the value from the tuple
          ...);                                 // NOTE: (,...) is needed for guaranteed order
 
@@ -114,7 +114,7 @@ struct res_evaluator<std::integer_sequence<size_t, I...>>
     }
 };
 
-template <class ResourceT , class ResultT>
+template <class ResourceT, class ResultT>
 base::computation_result make_comp_result(ResultT value)
 {
     static_assert(!is_handle<ResultT>::value, "TODO: implement indirect resources");

@@ -130,7 +130,7 @@ struct resource_traits
     //   takes content_ref::data_ptr
     //   and converts it to something that can be passed to the computation function
     // TODO: if we pass serialized span, we could skip some allocs
-    static auto from_content_data_ptr(void const* p) { return *reinterpret_cast<T const*>(p); }
+    static auto from_content_ref(base::content_ref const& content) { return *reinterpret_cast<T const*>(content.data_ptr); }
 
     template <class ResultT>
     static void make_comp_result(base::computation_result& res, ResultT value)

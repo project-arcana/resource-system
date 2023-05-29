@@ -74,34 +74,6 @@ struct alignas(64) ref_count
     void dec() { cc::intrin_atomic_add((int volatile*)&count, -1); }
 };
 
-// TODO: proper states
-//       in memory but not serialized
-//       hash only
-//       serialized but not deserialized
-//       ...
-// TODO: refcounting here?
-struct content_ref
-{
-    content_hash hash;
-
-    // generation that this content was computed for
-    int generation = -1;
-
-    // if this is a true, then the data is not necessarily the "most current"
-    // it's still accessible but will change in the future
-    bool is_outdated = false;
-
-    // TODO: if we would have serialized_ptr + size here
-    //       we could get rid of the indirection for span/string_view
-    void const* data_ptr = nullptr;
-
-    // TODO: more elaborate error type?
-    cc::string_view error_msg;
-
-    bool has_value() const { return data_ptr != nullptr; }
-    bool has_error() const { return data_ptr == nullptr; }
-};
-
 struct computation_desc
 {
     cc::string name;
