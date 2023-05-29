@@ -12,7 +12,15 @@ namespace res::base
 
 struct content_serialized_data
 {
+    type_hash type;
     cc::vector<std::byte> blob;
+
+    // noncopyable -> ensure ptr stability
+    content_serialized_data() = default;
+    content_serialized_data(content_serialized_data&&) = default;
+    content_serialized_data& operator=(content_serialized_data&&) = default;
+    content_serialized_data(content_serialized_data const&) = delete;
+    content_serialized_data& operator=(content_serialized_data const&) = delete;
 };
 struct content_runtime_data
 {
@@ -29,6 +37,13 @@ struct computation_result
     cc::optional<content_serialized_data> serialized_data;
     cc::optional<content_runtime_data> runtime_data;
     cc::optional<content_error_data> error_data;
+
+    // noncopyable
+    computation_result() = default;
+    computation_result(computation_result&&) = default;
+    computation_result& operator=(computation_result&&) = default;
+    computation_result(computation_result const&) = delete;
+    computation_result& operator=(computation_result const&) = delete;
 };
 
 // TODO: proper states
@@ -49,9 +64,6 @@ struct content_ref
     bool is_outdated = false;
 
     void const* data_ptr = nullptr;
-
-    // can be empty even if data_ptr is non-null
-    cc::span<std::byte const> serialized_data;
 
     // TODO: more elaborate error type?
     cc::string_view error_msg;

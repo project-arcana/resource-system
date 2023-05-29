@@ -129,8 +129,13 @@ struct resource_traits
     // concretely:
     //   takes content_ref::data_ptr
     //   and converts it to something that can be passed to the computation function
-    // TODO: if we pass serialized span, we could skip some allocs
-    static auto from_content_ref(base::content_ref const& content) { return *reinterpret_cast<T const*>(content.data_ptr); }
+    // NOTE: we cannot use the serialized data directly because res::handle<T>.try_get would not work with a pointer
+    static decltype(auto) from_content_data_ptr(void const* p)
+    {
+        CC_ASSERT(cc::is_aligned(p, alignof(T)) && "TODO: fix alignment");
+        return *reinterpret_cast<T const*>(p);
+    }
+
 
     template <class ResultT>
     static void make_comp_result(base::computation_result& res, ResultT value)
@@ -143,6 +148,7 @@ struct resource_traits
             {
                 base::content_serialized_data ser;
                 auto bindata = cc::as_byte_span(value);
+                ser.type = base::get_type_hash<T>();
                 ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
                 std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
                 res.serialized_data = cc::move(ser);
@@ -163,6 +169,7 @@ struct resource_traits
             {
                 base::content_serialized_data ser;
                 auto bindata = cc::as_byte_span(cc::string_view(value));
+                ser.type = base::get_type_hash<T>();
                 ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
                 std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
                 res.serialized_data = cc::move(ser);
@@ -183,6 +190,7 @@ struct resource_traits
             {
                 base::content_serialized_data ser;
                 auto bindata = cc::as_byte_span(value);
+                ser.type = base::get_type_hash<T>();
                 ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
                 std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
                 res.serialized_data = cc::move(ser);

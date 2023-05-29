@@ -168,3 +168,8 @@ TEST("res invoc caching")
     res::system().process_all();
     CHECK(eval_count == 1); // should have used cached invocation
 }
+
+
+// TODO: non-moveable types as args
+// TODO: error handling
+// TODO: MCT

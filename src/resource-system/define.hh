@@ -24,6 +24,9 @@
 #include <resource-system/detail/hash_helper.hh>
 #include <resource-system/detail/resource_slot.hh>
 
+// used for serialized typeinfo right now
+#include <typeinfo>
+
 namespace res
 {
 namespace detail
@@ -74,13 +77,13 @@ enum class res_type
 };
 
 template <class T>
-auto res_eval_arg_from_ptr(void const* p)
+decltype(auto) res_eval_arg_from_ptr(void const* p)
 {
     // is reference to other resource?
     // -> need to use runtime repr type
     if constexpr (is_handle<T>::value)
     {
-        return resource_traits<typename T::resource_t>::from_content_ref(*(base::content_ref const*)p);
+        return resource_traits<typename T::resource_t>::from_content_data_ptr(p);
     }
     // otherwise is direct arg
     // -> just use it as-is
@@ -104,11 +107,11 @@ struct res_evaluator<std::integer_sequence<size_t, I...>>
         void const* ptr_args[sizeof...(Args)];
         void const** p_args = ptr_args;
         auto p_res_args = res_args.data();
-        ((*p_args++ =                          // we set each arg in order
-          is_handle<std::decay_t<Args>>::value // if it's a handle
-              ? (void const*)p_res_args++      // then we use the next res_arg
-              : &cc::get<I>(direct_args)),     // otherwise we take the value from the tuple
-         ...);                                 // NOTE: (,...) is needed for guaranteed order
+        ((*p_args++ =                            // we set each arg in order
+          is_handle<std::decay_t<Args>>::value   // if it's a handle
+              ? (*p_res_args++).data_ptr         // then we use the next res_arg
+              : &direct_args.template get<I>()), // otherwise we take the value from the tuple
+         ...);                                   // NOTE: (,...) is needed for guaranteed order
 
         return cc::invoke(f, detail::res_eval_arg_from_ptr<std::decay_t<Args>>(ptr_args[I])...);
     }

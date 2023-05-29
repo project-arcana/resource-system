@@ -4,6 +4,9 @@
 
 #include <clean-core/hash.hh>
 
+// needed for type_hash right now
+#include <typeinfo>
+
 namespace res::base
 {
 // see https://en.wikipedia.org/wiki/Birthday_problem#Probability_table
@@ -31,6 +34,23 @@ struct content_hash : hash
 struct invoc_hash : hash
 {
 };
+struct type_hash : hash
+{
+};
+
+
+namespace detail
+{
+type_hash make_type_hash_from_name(char const* name);
+}
+
+template <class T>
+type_hash get_type_hash()
+{
+    // cached
+    static base::type_hash hash = detail::make_type_hash_from_name(typeid(T).name());
+    return hash;
+}
 } // namespace res::base
 
 template <>

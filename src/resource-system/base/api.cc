@@ -111,6 +111,7 @@ content_hash make_content_hash(computation_result const& res, invoc_hash invoc, 
     if (res.serialized_data.has_value()) // normal case
     {
         sha1.add(cc::as_byte_span(uint32_t(1000)));
+        sha1.add(cc::as_byte_span(res.serialized_data.value().type));
         sha1.add(res.serialized_data.value().blob);
     }
     else if (res.error_data.has_value()) // error case
@@ -134,7 +135,7 @@ content_hash make_content_hash(computation_result const& res, invoc_hash invoc, 
         if (is_impure)
             sha1.add(cc::as_byte_span(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
     }
-    return detail::finalize_as<content_hash>(sha1);
+    return res::detail::finalize_as<content_hash>(sha1);
 }
 
 // NOTE: these are threadsafe via reader/writer lock
@@ -182,6 +183,11 @@ struct MemoryStore
     {
         auto lock = std::unique_lock{_mutex};
         _data[hash] = cc::move(value);
+    }
+    void set_if_new(HashT hash, ValueT value)
+    {
+        auto lock = std::unique_lock{_mutex};
+        _data.get_or_create(hash, [&] { return cc::move(value); });
     }
     template <class MutF>
     bool modify(HashT hash, MutF&& mut_f)
@@ -237,8 +243,7 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
     cc::sha1_builder sha1;
     sha1.add(cc::as_byte_span(desc.name));
     sha1.add(cc::as_byte_span(desc.algo_hash));
-    // TODO: args?
-    auto const hash = detail::finalize_as<comp_hash>(sha1);
+    auto const hash = res::detail::finalize_as<comp_hash>(sha1);
 
     // read: check if comp already known
     auto has_val = m->comp_store.get(hash,
@@ -268,7 +273,7 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
     sha1.add(cc::as_byte_span(desc.computation));
     for (auto const& h : desc.args)
         sha1.add(cc::as_byte_span(h));
-    auto const hash = detail::finalize_as<res_hash>(sha1);
+    auto const hash = res::detail::finalize_as<res_hash>(sha1);
 
     // read: check if comp already known
     auto has_val = m->res_store.get(hash,
@@ -593,16 +598,22 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
         // actual resource computation
         // TODO: indirection
         // TODO: split computation, ...
-        LOG_VERBOSE("res %s compute content", shorthash(res));
+        LOG_VERBOSE("res %s compute content ...", shorthash(res));
         auto comp_result = compute_resource(args_content);
         CC_ASSERT(comp_result.error_data.has_value() || comp_result.runtime_data.has_value());
 
         auto content_hash = make_content_hash(comp_result, invoc, make_hash, is_impure);
 
-        // store result in content store
-        m->content_store.set(content_hash, content_desc{cc::move(comp_result)});
+        if (comp_result.serialized_data.has_value())
+            LOG_VERBOSE("content %s is serialized %s", shorthash(content_hash), comp_result.serialized_data.value().blob);
 
-        // TODO: if we could prevent error string sso, we could save this lookup
+        // store result in content store
+        // CAUTION: this must only be set if the content is new
+        //          otherwise we're invalidating previously valid references to the data
+        m->content_store.set_if_new(content_hash, content_desc{cc::move(comp_result)});
+
+        // NOTE: we always have to do this second lookup to ensure we get the reference that is actually in the db
+        // TODO: could be merged with previous set into more complex op
         auto content_data = m->content_store.get(content_hash, [gen](content_desc const& desc) { return desc.make_ref(gen); });
 
         // store result in invoc store
@@ -664,5 +675,5 @@ res::base::invoc_hash res::base::ResourceSystem::define_invocation(comp_hash con
     sha1.add(cc::as_byte_span(computation));
     for (auto const& h : args)
         sha1.add(cc::as_byte_span(h));
-    return detail::finalize_as<invoc_hash>(sha1);
+    return res::detail::finalize_as<invoc_hash>(sha1);
 }
