@@ -13,6 +13,7 @@
 #include <resource-system/detail/hash_helper.hh>
 #include <resource-system/detail/log.hh>
 
+#include <mutex>
 #include <shared_mutex>
 
 #define ENABLE_VERBOSE_LOG 0
