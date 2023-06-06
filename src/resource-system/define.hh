@@ -35,10 +35,7 @@ namespace detail
 template <class... Args>
 struct count_resource_handles
 {
-    enum
-    {
-        value = (0 + ... + int(is_handle<std::decay_t<Args>>::value))
-    };
+    static constexpr int value = ((int(is_handle<std::decay_t<Args>>::value)) + ... + 0);
 };
 
 template <class T>
@@ -104,7 +101,7 @@ struct res_evaluator<std::integer_sequence<size_t, I...>>
     {
         // TODO: support res::result<T> in args
 
-        void const* ptr_args[sizeof...(Args)];
+        void const* ptr_args[sizeof...(Args) + 1]; // the +1 only prevents empty arrays
         void const** p_args = ptr_args;
         auto p_res_args = res_args.data();
         ((*p_args++ =                            // we set each arg in order
