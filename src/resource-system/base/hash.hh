@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include <clean-core/bit_cast.hh>
 #include <clean-core/hash.hh>
 
 // needed for type_hash right now
@@ -42,6 +43,14 @@ struct type_hash : hash
 namespace detail
 {
 type_hash make_type_hash_from_name(char const* name);
+hash make_random_unique_hash();
+} // namespace detail
+
+template <class hash_t>
+hash_t make_random_unique_hash()
+{
+    static_assert(std::is_base_of_v<hash, hash_t>);
+    return cc::bit_cast<hash_t>(detail::make_random_unique_hash());
 }
 
 template <class T>

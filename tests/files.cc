@@ -10,7 +10,7 @@ TEST("file basics")
     auto const filename = "_test_res_file";
     babel::file::write(filename, "hello world!");
 
-    auto f = res::load(filename, res::file, res::text);
+    auto f = res::load(res::file, filename, res::text);
 
     res::system().process_all();
 

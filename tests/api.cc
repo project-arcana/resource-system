@@ -84,15 +84,15 @@ APP("resource API")
             // ...
         };
 
-        auto make_renderable = [](Mesh const&) -> Renderable
-        {
-            return {}; // create renderable
-        };
-        static_assert(std::is_trivially_copyable_v<decltype(make_renderable)>);
+        auto make_renderable = res::node_runtime(
+            [](Mesh const&) -> Renderable
+            {
+                return {}; // create renderable
+            });
 
         res::handle<float> param = res::create(0.0f);
 
-        res::handle<Mesh> meshA = res::define(
+        res::handle<Mesh> meshA = res::define_runtime(
             "meshA",
             [](float p)
             {
@@ -101,7 +101,7 @@ APP("resource API")
             },
             param);
 
-        res::handle<Mesh> meshB = res::define(
+        res::handle<Mesh> meshB = res::define_runtime(
             "meshB",
             [](Mesh const&)
             {
@@ -109,8 +109,8 @@ APP("resource API")
             },
             meshA);
 
-        res::handle<Renderable> rA = res::define("make_renderable", make_renderable, meshA);
-        res::handle<Renderable> rB = res::define("make_renderable", make_renderable, meshB);
+        res::handle<Renderable> rA = res::define(make_renderable, meshA);
+        res::handle<Renderable> rB = res::define(make_renderable, meshB);
 
         pv::interactive(
             [&]

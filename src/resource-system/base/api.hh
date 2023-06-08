@@ -62,7 +62,7 @@
 // - cached content per resource can be globally invalidated via generation int
 //   NOTE: { content hash -> content bytes } stays valid
 //         only the { res hash -> content hash } mapping is invalidated
-// - optimization: resources that transitively don't depend on impure resource can stay valid
+// - optimization: resources that transitively don't depend on volatile resource can stay valid
 
 namespace res::base
 {
@@ -112,12 +112,15 @@ struct resource_desc
     // all dependencies of this resource
     cc::span<res_hash const> args;
 
-    // impure resources are assumed to change with their environment
+    // volatile resources are assumed to change with their environment
     // however, this is only checked whenever a global generation counter is changed
-    // impure resources are checked relatively frequently when developing
+    // volatile resources are checked relatively frequently when developing
     // so they should be extremely fast
     // expensive computations should be guarded by a dirty flag or put into later pure resources
-    bool is_impure = false;
+    bool is_volatile = false;
+
+    // persisted resources cause invoc cache and created content to be saved to disk
+    bool is_persisted = true;
 };
 
 /// a resource system manages access / computation / lifetimes of resources
@@ -151,18 +154,18 @@ public:
     // TODO: refcounting?
     comp_hash define_computation(computation_desc desc);
 
-    // TODO: flags for impure resources here?
+    // TODO: flags for volatile resources here?
     // NOTE: the returned counter is initialized with count=1
     cc::pair<res_hash, ref_count*> define_resource(resource_desc const& desc);
 
     // NOTE: can return content with is_outdated = true
     cc::optional<content_ref> try_get_resource_content(res_hash res, bool enqueue_if_not_found = true);
 
-    // invalidates all impure resources such as file timestamps or tweakable data
+    // invalidates all volatile resources such as file timestamps or tweakable data
     // this is an extremely cheap O(1) operation
     // it will cause gradual recompution of all dependent resources
     // though in practice, most will hit the content caches anyways
-    void invalidate_impure_resources();
+    void invalidate_volatile_resources();
 
     /// returns true if this content can be used
     /// returns false if try_get_resource_content should be called again

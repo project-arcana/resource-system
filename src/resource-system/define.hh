@@ -16,6 +16,7 @@
 
 #include <resource-system/handle.hh>
 #include <resource-system/meta.hh>
+#include <resource-system/node.hh>
 
 // currently we need to include this
 // which includes cc::string
@@ -65,12 +66,13 @@ void add_resource_to_args(base::res_hash*& p_args, T const& val)
     }
 }
 
-resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_impure);
+resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile, bool is_persisted);
 
 enum class res_type
 {
     normal,
-    impure,
+    volatile_,
+    runtime,
 };
 
 template <class T>
@@ -144,7 +146,7 @@ base::computation_result make_comp_result(ResultT value)
 }
 
 template <class FunT, class... Args>
-auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args&&... args)
+auto define_res_via_lambda(base::hash comp_base_hash, res_type type, FunT&& fun, Args&&... args)
 {
     static_assert(std::is_trivially_copyable_v<std::decay_t<FunT>>,                 //
                   "callables must be POD-like, i.e. all captures must be trivial. " //
@@ -196,9 +198,43 @@ auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args
         return detail::make_comp_result<ResourceT>(eval_res);
     };
 
-    auto is_impure = type == res_type::impure;
-    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_impure);
+    auto is_volatile = type == res_type::volatile_;
+    auto is_persisted = type == res_type::normal;
+    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_volatile, is_persisted);
     return slot->template create_handle<ResourceT>();
+}
+
+template <class T>
+auto define_constant(T value) -> handle<result_to_resource<T>>
+{
+    using ResourceT = result_to_resource<T>;
+
+    // TODO: if we have a concept of "injected resources / content", we could do with a single computation
+
+    base::computation_desc comp_desc;
+    comp_desc.name = "@builtin/constant";
+    comp_desc.algo_hash = base::make_random_unique_hash<base::comp_hash>();
+    comp_desc.compute_resource = [value = cc::move(value)](cc::span<base::content_ref const> res_args) -> base::computation_result
+    {
+        CC_ASSERT(res_args.empty());
+
+        // serialize result
+        return detail::make_comp_result<ResourceT>(value);
+    };
+
+    auto is_volatile = false;
+    auto is_persisted = false;
+    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), {}, is_volatile, is_persisted);
+    return slot->template create_handle<ResourceT>();
+}
+
+template <class T>
+auto wrap_to_handle(T&& v)
+{
+    if constexpr (is_handle<std::remove_reference_t<T>>::value)
+        return v;
+    else
+        return detail::define_constant(cc::forward<T>(v));
 }
 
 } // namespace detail
@@ -219,74 +255,54 @@ auto define_res_via_lambda(cc::string_view name, res_type type, FunT&& fun, Args
 ///  - some nodes support using the name as argument as well
 ///    e.g. res::define("/path/to/some/file", res::file);
 template <class NodeT, class... Args>
-[[nodiscard]] auto define(cc::string_view name, NodeT&& node, Args&&... args)
+[[nodiscard]] auto define(Node& node, Args&&... args)
 {
-    // explicit node
-    if constexpr (res::node_traits<std::decay_t<NodeT>>::is_node)
-    {
-        return node.define_resource(name, cc::forward<Args>(args)...);
-    }
-    // .. or callable
-    else
-    {
-        return detail::define_res_via_lambda(name, detail::res_type::normal, cc::forward<NodeT>(node), cc::forward<Args>(args)...);
-    }
+    return node.define_resource(cc::forward<Args>(args)...);
 }
-/// same as res::define but will never use a cached invocation
-/// aka treats the computation function as non-deterministic / impure
-template <class NodeT, class... Args>
-[[nodiscard]] auto define_impure(cc::string_view name, NodeT&& node, Args&&... args)
+/// same as
+///   auto n = res::node_runtime(fun);
+///   auto r = res::define(n, args...);
+template <class Fun, class... Args>
+[[nodiscard]] auto define_runtime(Fun&& fun, Args&&... args)
 {
-    // explicit node
-    if constexpr (res::node_traits<std::decay_t<NodeT>>::is_node)
-    {
-        static_assert(cc::always_false<NodeT>, "TODO: implement impure for nodes");
-    }
-    // .. or callable
-    else
-    {
-        return detail::define_res_via_lambda(name, detail::res_type::impure, cc::forward<NodeT>(node), cc::forward<Args>(args)...);
-    }
+    auto n = res::node_runtime(cc::forward<Fun>(fun));
+    return res::define(n, cc::forward<Args>(args)...);
+}
+/// same as
+///   auto n = res::node_volatile(fun);
+///   auto r = res::define(n, args...);
+template <class Fun, class... Args>
+[[nodiscard]] auto define_volatile(Fun&& fun, Args&&... args)
+{
+    auto n = res::node_volatile(cc::forward<Fun>(fun));
+    return res::define(n, cc::forward<Args>(args)...);
 }
 
 /// defines a resource and provides an explicit value
+/// NOTE: values are not deduplicated (each invocation creates a new node)
 template <class T>
-[[nodiscard]] handle<T> create(cc::string_view name, T value)
+[[nodiscard]] auto create(T value) -> handle<detail::result_to_resource<T>>
 {
-    return res::define(
-        name, [](T value) { return value; }, cc::move(value));
+    // TODO: alternative:
+    //   static n = res::node("__internal/const/" + T, [](T const& v) { return v; });
+    //   return res::define(n, cc::move(value));
+    return detail::define_constant(cc::move(value));
 }
+/// creates a _volatile_ resource referencing 'value'
+/// CAUTION: user must ensure that lifetime of value is greater than any resource use
 template <class T>
-[[nodiscard]] handle<T> create(T value)
+[[nodiscard]] auto create_volatile_ref(T& value) -> handle<detail::result_to_resource<T>>
 {
-    return res::define(
-        "$const", [](T value) { return value; }, cc::move(value));
+    auto n = res::node_volatile([&value] { return value; });
+    return res::define(n);
 }
 
 /// defines a resource, triggers its loading, and returns a handle to it
-template <class NodeT, class... Args>
-[[nodiscard]] auto load(cc::string_view name, NodeT&& node, Args&&... args)
+template <class... Args>
+[[nodiscard]] auto load(Node& node, Args&&... args)
 {
-    auto h = res::define(name, cc::forward<NodeT>(node), cc::forward<Args>(args)...);
+    auto h = res::define(node, cc::forward<Args>(args)...);
     h.try_get();
     return h;
-}
-
-/// helper to wrap a named function into a callable that returns handles given args
-/// i.e.
-///    auto h = res::define(name, fun, args...)
-/// is the same as
-///    auto n = res::node(name, fun);
-///    auto h = n(args...);
-///
-template <class FunT>
-auto node(cc::string_view name, FunT&& fun)
-{
-    return [name, fun](auto&&... args) { return res::define(name, fun, cc::forward<decltype(args)>(args)...); };
-}
-template <class FunT>
-auto node_impure(cc::string_view name, FunT&& fun)
-{
-    return [name, fun](auto&&... args) { return res::define_impure(name, fun, cc::forward<decltype(args)>(args)...); };
 }
 } // namespace res

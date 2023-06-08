@@ -51,7 +51,8 @@ struct res_desc
     comp_hash comp;
     cc::vector<res_hash> args;
 
-    bool is_impure = false;
+    bool is_volatile = false;
+    bool is_persisted = false;
 
     // NOTE: this only tracks external references
     //       internal references are part of the GC process
@@ -106,7 +107,7 @@ struct invoc_desc
     content_hash content;
 };
 
-content_hash make_content_hash(computation_result const& res, invoc_hash invoc, cc::function_ptr<content_hash(void const*)> make_hash, bool is_impure)
+content_hash make_content_hash(computation_result const& res, invoc_hash invoc, cc::function_ptr<content_hash(void const*)> make_hash, bool is_volatile)
 {
     cc::sha1_builder sha1;
     if (res.serialized_data.has_value()) // normal case
@@ -131,9 +132,9 @@ content_hash make_content_hash(computation_result const& res, invoc_hash invoc, 
         sha1.add(cc::as_byte_span(uint32_t(4000)));
         sha1.add(cc::as_byte_span(invoc));
 
-        // impure + non-serializable means we have no idea what the content is
+        // volatile + non-serializable means we have no idea what the content is
         // thus we add a basically random value to the hash
-        if (is_impure)
+        if (is_volatile)
             sha1.add(cc::as_byte_span(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
     }
     return res::detail::finalize_as<content_hash>(sha1);
@@ -292,7 +293,8 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
         res_desc rdesc;
         rdesc.comp = desc.computation;
         rdesc.args.push_back_range(desc.args);
-        rdesc.is_impure = desc.is_impure;
+        rdesc.is_volatile = desc.is_volatile;
+        rdesc.is_persisted = desc.is_persisted;
         rdesc.ref_counter = cc::alloc<ref_count>();
         counter = rdesc.ref_counter;
 
@@ -476,7 +478,8 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     //   (can check if resource already up to date)
     int const gen = generation;
     auto is_up_to_date = false;
-    auto is_impure = false;
+    auto is_volatile = false;
+    auto is_persisted = false;
     comp_hash comp;
     auto found_res = m->res_store.get(res,
                                       [&](res_desc const& desc)
@@ -489,7 +492,8 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
 
                                           comp = desc.comp;
                                           args = desc.args; // copy
-                                          is_impure = desc.is_impure;
+                                          is_volatile = desc.is_volatile;
+                                          is_persisted = desc.is_persisted;
                                       });
     CC_ASSERT(found_res && "overzealous GC?");
 
@@ -520,9 +524,9 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     // read cached invocation data
     auto const invoc = this->define_invocation(comp, args_content_hashes);
 
-    // impure resources might change their content with each invocation
+    // volatile resources might change their content with each invocation
     // so we cannot rely on the invoc_store for them
-    if (!is_impure)
+    if (!is_volatile)
     {
         auto invoc_res = m->invoc_store.get(invoc, [&](invoc_desc const& desc) { return desc.content; });
 
@@ -603,7 +607,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
         auto comp_result = compute_resource(args_content);
         CC_ASSERT(comp_result.error_data.has_value() || comp_result.runtime_data.has_value());
 
-        auto content_hash = make_content_hash(comp_result, invoc, make_hash, is_impure);
+        auto content_hash = make_content_hash(comp_result, invoc, make_hash, is_volatile);
 
         if (comp_result.serialized_data.has_value())
             LOG_VERBOSE("content %s is serialized %s", shorthash(content_hash), comp_result.serialized_data.value().blob);
@@ -638,7 +642,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
 }
 
 
-void res::base::ResourceSystem::invalidate_impure_resources()
+void res::base::ResourceSystem::invalidate_volatile_resources()
 {
     // simple for now
     cc::intrin_atomic_add(&generation, 1);

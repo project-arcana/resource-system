@@ -27,7 +27,7 @@ bool res::detail::resource_is_loaded_no_error(resource_slot const& r) { return r
 
 res::base::res_hash res::detail::resource_get_hash(resource_slot& r) { return r.resource; }
 
-res::detail::resource_slot* res::detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_impure)
+res::detail::resource_slot* res::detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile, bool is_persisted)
 {
     auto& system = res::system();
     auto& base = system.base();
@@ -37,7 +37,8 @@ res::detail::resource_slot* res::detail::get_or_create_resource_slot(res::base::
     base::resource_desc rdesc;
     rdesc.computation = comp;
     rdesc.args = args;
-    rdesc.is_impure = is_impure;
+    rdesc.is_volatile = is_volatile;
+    rdesc.is_persisted = is_persisted;
     auto [res, counter] = base.define_resource(rdesc);
 
     auto& mutex = system.m->res_slots_mutex;
@@ -95,7 +96,7 @@ void const* res::detail::resource_try_get(resource_slot& r)
 
 void res::System::process_all() { base_system.process_all(); }
 
-void res::System::invalidate_impure_resources() { base_system.invalidate_impure_resources(); }
+void res::System::invalidate_volatile_resources() { base_system.invalidate_volatile_resources(); }
 
 res::System::System() { m = cc::make_unique<pimpl>(); }
 

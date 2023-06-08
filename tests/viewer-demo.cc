@@ -23,11 +23,10 @@ APP("viewer resource demo")
         bool emit_lines = true;
     } params;
 
-    auto renderables = res::load(
-        "make_grid_renderables",
+    auto make_grid = res::node_runtime(
         [](grid_params p)
         {
-            auto c = gv::canvas();
+            auto c = gv::canvas_data();
 
             LOG("build grid");
 
@@ -70,8 +69,9 @@ APP("viewer resource demo")
                 }
 
             return c.create_renderables();
-        },
-        res::define_impure("params", [&params] { return params; }));
+        });
+
+    auto renderables = res::load(make_grid, res::create_volatile_ref(params));
 
     gv::interactive(
         [&]
@@ -84,7 +84,7 @@ APP("viewer resource demo")
             changed |= ImGui::SliderInt("size y", &params.size_y, 1, 32);
             changed |= ImGui::Checkbox("show lines", &params.emit_lines);
             if (changed)
-                res::system().invalidate_impure_resources();
+                res::system().invalidate_volatile_resources();
 
             // process graph
             res::system().process_all();

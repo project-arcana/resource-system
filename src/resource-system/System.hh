@@ -7,7 +7,7 @@
 
 namespace res::detail
 {
-detail::resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_impure);
+detail::resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile, bool is_persisted);
 }
 
 namespace res
@@ -28,7 +28,7 @@ public:
     base::ResourceSystem& base() { return base_system; }
     base::ResourceSystem const& base() const { return base_system; }
 
-    void invalidate_impure_resources();
+    void invalidate_volatile_resources();
 
     System();
     ~System();
@@ -40,6 +40,6 @@ private:
     struct pimpl;
     cc::unique_ptr<pimpl> m;
 
-    friend detail::resource_slot* detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_impure);
+    friend detail::resource_slot* detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile);
 };
 } // namespace res

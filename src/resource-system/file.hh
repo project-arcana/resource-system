@@ -28,7 +28,7 @@ class FileNode;
 ///
 extern FileNode file;
 
-class FileNode
+class FileNode : public Node
 {
 public:
     FileNode();
