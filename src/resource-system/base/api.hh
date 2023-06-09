@@ -76,7 +76,6 @@ struct alignas(64) ref_count
 
 struct computation_desc
 {
-    cc::string name;
     hash algo_hash;
 
     // NOTE: the arg content is never outdated
