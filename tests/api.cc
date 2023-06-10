@@ -93,7 +93,6 @@ APP("resource API")
         res::handle<float> param = res::create(0.0f);
 
         res::handle<Mesh> meshA = res::define_runtime(
-            "meshA",
             [](float p)
             {
                 (void)p;       // use parameter
@@ -102,7 +101,6 @@ APP("resource API")
             param);
 
         res::handle<Mesh> meshB = res::define_runtime(
-            "meshB",
             [](Mesh const&)
             {
                 return Mesh(); // do something with input

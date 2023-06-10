@@ -92,6 +92,27 @@ struct result_traits
     using resource_t = std::decay_t<decltype(impl_to_resource(nullptr))>;
 };
 
+/// arg traits define the metamodel for how to treat non-handle arguments that define resources
+/// in particular, res::create(T(...)) must map T to a proper handle type
+template <class T, class = void>
+struct arg_traits
+{
+    // note: we have to ensure known view types are "lifetime-extended"
+    static auto make_const_val(T value)
+    {
+        // char const* / string_view
+        if constexpr (std::is_constructible_v<cc::string, T>)
+            return cc::string(cc::move(value));
+        else if constexpr (detail::is_span<T>::value)
+        {
+            using U = std::remove_const_t<cc::collection_element_t<T>>;
+            return cc::array<U>(value);
+        }
+        else
+            return cc::move(value);
+    }
+};
+
 namespace detail
 {
 // int -> int
@@ -115,6 +136,9 @@ struct arg_to_resource_t<handle<T>>
 };
 template <class T>
 using arg_to_resource = typename arg_to_resource_t<std::decay_t<T>>::type;
+
+template <class T>
+using const_to_resource = result_to_resource<decltype(arg_traits<T>::make_const_val(std::declval<T>()))>;
 } // namespace detail
 
 /// metamodel for resource types
@@ -122,6 +146,9 @@ using arg_to_resource = typename arg_to_resource_t<std::decay_t<T>>::type;
 ///  - serialization
 ///  - hashing
 ///  - pretty printing
+///
+/// NOTE: the T is whatever can appear in handle<T>
+///       in particular, it is usually not vector<U> or array<U> but rather span<U const>
 template <class T, class = void>
 struct resource_traits
 {

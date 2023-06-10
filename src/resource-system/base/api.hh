@@ -76,7 +76,11 @@ struct alignas(64) ref_count
 
 struct computation_desc
 {
+    // usually used to hash the computed function
     hash algo_hash;
+    // used as additional hash for templated functions
+    // is optional
+    hash type_hash;
 
     // NOTE: the arg content is never outdated
     cc::unique_function<computation_result(cc::span<content_ref const>)> compute_resource;

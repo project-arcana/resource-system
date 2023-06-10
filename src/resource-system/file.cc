@@ -12,6 +12,8 @@
 
 res::FileNode res::file;
 
+res::base::hash res::FileNode::algo_hash = res::detail::make_name_version_algo_hash("$internal/res/file", 1000);
+
 struct res::FileNode::state
 {
     cc::map<cc::string, cc::filewatch> reloads;
@@ -29,7 +31,7 @@ void res::FileNode::check_hot_reloading()
             LOG("file '%s' has changed and is invalidated", fname);
 
             // invalidate
-            res::system().base().invalidate_impure_resources();
+            res::system().base().invalidate_volatile_resources();
 
             // clear filewatch
             fwatch.set_unchanged();

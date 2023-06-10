@@ -16,8 +16,8 @@ namespace res::base
 // - 10^-18 probability of at least one collision
 struct alignas(16) hash
 {
-    uint64_t w0;
-    uint64_t w1;
+    uint64_t w0 = 0;
+    uint64_t w1 = 0;
 
     constexpr bool operator==(hash const& h) const { return w0 == h.w0 && w1 == h.w1; }
     constexpr bool operator!=(hash const& h) const { return w0 != h.w0 || w1 != h.w1; }
@@ -46,7 +46,7 @@ type_hash make_type_hash_from_name(char const* name);
 hash make_random_unique_hash();
 } // namespace detail
 
-template <class hash_t>
+template <class hash_t = hash>
 hash_t make_random_unique_hash()
 {
     static_assert(std::is_base_of_v<hash, hash_t>);

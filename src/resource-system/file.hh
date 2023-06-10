@@ -30,6 +30,8 @@ extern FileNode file;
 
 class FileNode : public Node
 {
+    static base::hash algo_hash;
+
 public:
     FileNode();
 
@@ -49,11 +51,11 @@ public:
     result<cc::string> execute(cc::string_view filename, text_tag) const;
 
     template <class... Args>
-    auto define_resource(cc::string_view name, Args&&... args)
+    auto define_resource(Args&&... args)
     {
         // TODO impure part
         return detail::define_res_via_lambda(
-            name, detail::res_type::normal, [](auto&&... args) { return file.execute(args...); }, name, cc::forward<Args>(args)...);
+            algo_hash, detail::res_type::normal, [](auto&&... args) { return file.execute(args...); }, cc::forward<Args>(args)...);
     }
 
 private:

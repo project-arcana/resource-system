@@ -3,6 +3,40 @@
 #include <resource-system/System.hh>
 #include <resource-system/res.hh>
 
+TEST("res handle types")
+{
+    {
+        auto h = res::create(7);
+        static_assert(std::is_same_v<decltype(h), res::handle<int>>);
+    }
+    {
+        auto h = res::create(7.);
+        static_assert(std::is_same_v<decltype(h), res::handle<double>>);
+    }
+    {
+        auto h = res::create(cc::string("hello"));
+        static_assert(std::is_same_v<decltype(h), res::handle<cc::string_view>>);
+    }
+    {
+        auto h = res::create(cc::string_view("hello"));
+        static_assert(std::is_same_v<decltype(h), res::handle<cc::string_view>>);
+    }
+    {
+        auto h = res::create(cc::vector<int>{1, 2, 3, 4});
+        static_assert(std::is_same_v<decltype(h), res::handle<cc::span<int const>>>);
+    }
+    {
+        auto h = res::create(cc::array<int>{1, 2, 3, 4});
+        static_assert(std::is_same_v<decltype(h), res::handle<cc::span<int const>>>);
+    }
+    {
+        auto h = res::create(cc::span<int>());
+        static_assert(std::is_same_v<decltype(h), res::handle<cc::span<int const>>>);
+    }
+
+    CHECK(true);
+}
+
 TEST("res explicit resource")
 {
     auto h = res::create(7);

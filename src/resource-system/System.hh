@@ -40,6 +40,9 @@ private:
     struct pimpl;
     cc::unique_ptr<pimpl> m;
 
-    friend detail::resource_slot* detail::get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile);
+    friend detail::resource_slot* detail::get_or_create_resource_slot(res::base::computation_desc desc,
+                                                                      cc::span<res::base::res_hash const> args,
+                                                                      bool is_volatile,
+                                                                      bool is_persisted);
 };
 } // namespace res

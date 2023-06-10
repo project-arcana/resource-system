@@ -22,6 +22,7 @@ base::hash make_name_version_algo_hash(cc::string_view name, int version);
 ///   auto n = res::node_runtime(...)
 class Node
 {
+public:
     Node() = default;
 
     // non-copyable / non-movable
@@ -30,20 +31,22 @@ class Node
 };
 
 template <class Fun>
-class FunctionNode
+class FunctionNode : public Node
 {
 public:
-    FunctionNode(Fun fun, base::comp_hash comp_hash, detail::res_type type) : fun(cc::move(fun)), comp_hash(comp_hash), type(type) {}
+    FunctionNode(Fun fun, base::hash algo_hash, detail::res_type type) : fun(cc::move(fun)), algo_hash(algo_hash), type(type) {}
 
     template <class... Args>
     auto define_resource(Args&&... args)
     {
-        return detail::define_res_via_lambda(comp_hash, type, fun, cc::forward<Args>(args)...);
+        // TODO: maybe we need to add arg types to algo_hash as well
+        //       because fun might be templated
+        return detail::define_res_via_lambda(algo_hash, type, fun, cc::forward<Args>(args)...);
     }
 
 private:
     Fun fun;
-    base::comp_hash comp_hash;
+    base::hash algo_hash;
     detail::res_type type;
 };
 
@@ -62,7 +65,7 @@ auto node(cc::string_view name, int version, FunT&& fun)
 template <class FunT>
 auto node_volatile(FunT&& fun)
 {
-    return FunctionNode<std::decay_t<FunT>>(cc::forward<FunT>(fun), base::detail::make_random_unique_hash(), detail::res_type::volatile_);
+    return FunctionNode<std::decay_t<FunT>>(cc::forward<FunT>(fun), base::make_random_unique_hash(), detail::res_type::volatile_);
 }
 /// runtime nodes are not persistent and basically "anonymous"
 /// internally, they are assigned a random comp_hash
@@ -70,6 +73,6 @@ auto node_volatile(FunT&& fun)
 template <class FunT>
 auto node_runtime(FunT&& fun)
 {
-    return FunctionNode<std::decay_t<FunT>>(cc::forward<FunT>(fun), base::detail::make_random_unique_hash(), detail::res_type::runtime);
+    return FunctionNode<std::decay_t<FunT>>(cc::forward<FunT>(fun), base::make_random_unique_hash(), detail::res_type::runtime);
 }
 } // namespace res

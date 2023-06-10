@@ -3,10 +3,13 @@
 #include <type_traits>
 
 #include <resource-system/detail/internal_define.hh>
+#include <resource-system/node.hh>
 
-// given a type T, returns a handle<U>
-// where U is how this resource is internally accessed
-// e.g. vector<int> becomes handle<span<int>>
+namespace res
+{
+/// given a type T, returns a handle<U>
+/// where U is how this resource is internally accessed
+/// e.g. vector<int> becomes handle<span<int>>
 template <class T>
 using handle_for = handle<detail::result_to_resource<T>>;
 
@@ -53,7 +56,7 @@ template <class Fun, class... Args>
 /// defines a resource and provides an explicit value
 /// NOTE: values are not deduplicated (each invocation creates a new node)
 template <class T>
-[[nodiscard]] auto create(T value) -> handle<detail::result_to_resource<T>>
+[[nodiscard]] auto create(T value) -> handle<detail::const_to_resource<T>>
 {
     // TODO: alternative:
     //   static n = res::node("__internal/const/" + T, [](T const& v) { return v; });

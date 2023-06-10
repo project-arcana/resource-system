@@ -27,40 +27,6 @@
 
 namespace res::detail
 {
-
-template <class... Args>
-struct count_resource_handles
-{
-    static constexpr int value = ((int(is_handle<std::decay_t<Args>>::value)) + ... + 0);
-};
-
-template <class T>
-void add_non_resource_to_hash(cc::sha1_builder& sha1, T const& val)
-{
-    if constexpr (is_handle<T>::value)
-    {
-        // nothing, is part of resource desc
-    }
-    else
-    {
-        static_assert(std::is_trivially_copyable_v<T>, "non-resource arguments must be POD currently. TODO: use meta serialization system");
-        sha1.add(cc::as_byte_span(val));
-    }
-}
-
-template <class T>
-void add_resource_to_args(base::res_hash*& p_args, T const& val)
-{
-    if constexpr (is_handle<T>::value)
-    {
-        *p_args++ = val.get_hash();
-    }
-    else
-    {
-        // nothing
-    }
-}
-
 resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile, bool is_persisted);
 
 enum class res_type
@@ -71,20 +37,10 @@ enum class res_type
 };
 
 template <class T>
-decltype(auto) res_eval_arg_from_ptr(void const* p)
+T const& get_resource_arg(base::content_ref const& content)
 {
-    // is reference to other resource?
-    // -> need to use runtime repr type
-    if constexpr (is_handle<T>::value)
-    {
-        return resource_traits<typename T::resource_t>::from_content_data_ptr(p);
-    }
-    // otherwise is direct arg
-    // -> just use it as-is
-    else
-    {
-        return *reinterpret_cast<T const*>(p);
-    }
+    CC_ASSERT(content.has_value());
+    return resource_traits<T>::from_content_data_ptr(content.data_ptr);
 }
 
 template <class>
@@ -93,21 +49,13 @@ struct res_evaluator;
 template <size_t... I>
 struct res_evaluator<std::integer_sequence<size_t, I...>>
 {
-    template <class F, class DirectArgTuple, class... Args>
-    static auto eval(F const& f, DirectArgTuple const& direct_args, cc::span<base::content_ref const> res_args)
+    template <class F, class... ResArgs>
+    static auto eval(F const& f, cc::span<base::content_ref const> res_args)
     {
+        CC_ASSERT(res_args.size() == sizeof...(ResArgs));
         // TODO: support res::result<T> in args
 
-        void const* ptr_args[sizeof...(Args) + 1]; // the +1 only prevents empty arrays
-        void const** p_args = ptr_args;
-        auto p_res_args = res_args.data();
-        ((*p_args++ =                            // we set each arg in order
-          is_handle<std::decay_t<Args>>::value   // if it's a handle
-              ? (*p_res_args++).data_ptr         // then we use the next res_arg
-              : &direct_args.template get<I>()), // otherwise we take the value from the tuple
-         ...);                                   // NOTE: (,...) is needed for guaranteed order
-
-        return cc::invoke(f, detail::res_eval_arg_from_ptr<std::decay_t<Args>>(ptr_args[I])...);
+        return cc::invoke(f, detail::get_resource_arg<ResArgs>(res_args[I])...);
     }
 };
 
@@ -140,67 +88,19 @@ base::computation_result make_comp_result(ResultT value)
     }
 }
 
-template <class FunT, class... Args>
-auto define_res_via_lambda(base::hash algo_hash, res_type type, FunT&& fun, Args&&... args)
-{
-    static_assert(std::is_trivially_copyable_v<std::decay_t<FunT>>,                 //
-                  "callables must be POD-like, i.e. all captures must be trivial. " //
-                  "non-trivial captures should be provided as function argument.");
-
-    static_assert(std::is_invocable_v<FunT, arg_to_resource<Args> const&...>, //
-                  "function is not callable with the correct argument types");
-
-    using ResultT = std::decay_t<std::invoke_result_t<FunT, arg_to_resource<Args> const&...>>;
-    static_assert(!is_handle<ResultT>::value, "TODO: implement indirect resources");
-    using ResourceT = result_to_resource<ResultT>;
-
-    // collect resource handles
-    auto constexpr res_arg_count = int(count_resource_handles<Args...>::value);
-    base::res_hash res_args[res_arg_count > 0 ? res_arg_count : 1]; // the max(1,..) is to prevent zero sized arrays
-    base::res_hash* p_res_args = res_args;
-    (detail::add_resource_to_args(p_res_args, args), ...);
-
-    base::computation_desc comp_desc;
-    comp_desc.algo_hash = algo_hash;
-    comp_desc.compute_resource = [fun = cc::move(fun),                                                      //
-                                  arg_tuple = cc::tuple<std::decay_t<Args>...>(cc::forward<Args>(args)...)] //
-        (cc::span<base::content_ref const> res_args) -> base::computation_result
-    {
-        // if any arg is missing, result is error
-        for (auto const& arg : res_args)
-            if (arg.has_error())
-            {
-                base::computation_result res;
-                base::content_error_data err;
-                err.message = "at least one dependency had an error";
-                res.error_data = cc::move(err);
-                return res;
-            }
-
-        // actual eval
-        auto eval_res = res_evaluator<std::make_index_sequence<sizeof...(Args)>> //
-            ::template eval<std::decay_t<FunT>, decltype(arg_tuple), Args...>(fun, arg_tuple, res_args);
-
-        // unpack / convert / serialize result
-        return detail::make_comp_result<ResourceT>(eval_res);
-    };
-
-    auto is_volatile = type == res_type::volatile_;
-    auto is_persisted = type == res_type::normal;
-    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_volatile, is_persisted);
-    return slot->template create_handle<ResourceT>();
-}
-
 template <class T>
-auto define_constant(T value) -> handle<result_to_resource<T>>
+auto define_constant(T value) -> handle<const_to_resource<T>>
 {
-    using ResourceT = result_to_resource<T>;
+    using ResourceT = const_to_resource<T>;
 
     // TODO: if we have a concept of "injected resources / content", we could do with a single computation
 
     base::computation_desc comp_desc;
     comp_desc.algo_hash = base::make_random_unique_hash<base::comp_hash>();
-    comp_desc.compute_resource = [value = cc::move(value)](cc::span<base::content_ref const> res_args) -> base::computation_result
+    comp_desc.compute_resource =
+        // ensure we make a copy of "view types"
+        [value = arg_traits<T>::make_const_val(cc::move(value))] //
+        (cc::span<base::content_ref const> res_args) -> base::computation_result
     {
         CC_ASSERT(res_args.empty());
 
@@ -222,4 +122,69 @@ auto wrap_to_handle(T&& v)
     else
         return detail::define_constant(cc::forward<T>(v));
 }
+
+template <class... ResArgs>
+base::hash get_arg_type_hash()
+{
+    static base::hash hash = []
+    {
+        cc::sha1_builder sha1;
+        (sha1.add(cc::as_byte_span(base::get_type_hash<ResArgs>())), ...);
+        return detail::finalize_as<base::hash>(sha1);
+    }();
+    return hash;
 }
+
+template <class FunT, class... Args>
+auto define_res_via_lambda(base::hash algo_hash, res_type type, FunT&& fun, Args&&... args)
+{
+    static_assert(std::is_trivially_copyable_v<std::decay_t<FunT>>,                 //
+                  "callables must be POD-like, i.e. all captures must be trivial. " //
+                  "non-trivial captures should be provided as function argument.");
+
+    static_assert(std::is_invocable_v<FunT, arg_to_resource<Args> const&...>, //
+                  "function is not callable with the correct argument types");
+
+    using ResultT = std::decay_t<std::invoke_result_t<FunT, arg_to_resource<Args> const&...>>;
+    static_assert(!is_handle<ResultT>::value, "TODO: implement indirect resources");
+    using ResourceT = result_to_resource<ResultT>;
+
+    // collect resource handles
+    auto constexpr res_arg_count = sizeof...(args);
+    base::res_hash res_args[res_arg_count > 0 ? res_arg_count : 1]; // the max(1,..) is to prevent zero sized arrays
+    base::res_hash* p_res_args = res_args;
+    ((*p_res_args++ = detail::wrap_to_handle(cc::forward<Args>(args)).get_hash()), ...);
+
+    base::computation_desc comp_desc;
+    comp_desc.algo_hash = algo_hash;
+    comp_desc.type_hash = detail::get_arg_type_hash<arg_to_resource<Args>...>();
+    comp_desc.compute_resource = [fun = cc::move(fun)] //
+        (cc::span<base::content_ref const> res_args) -> base::computation_result
+    {
+        CC_ASSERT(res_args.size() == sizeof...(Args) && "wrong number of inputs");
+
+        // if any arg is missing, result is error
+        for (auto const& arg : res_args)
+            if (arg.has_error())
+            {
+                base::computation_result res;
+                base::content_error_data err;
+                err.message = "at least one dependency had an error";
+                res.error_data = cc::move(err);
+                return res;
+            }
+
+        // actual eval
+        auto eval_res = res_evaluator<std::make_index_sequence<sizeof...(Args)>> //
+            ::template eval<std::decay_t<FunT>, arg_to_resource<Args>...>(fun, res_args);
+
+        // unpack / convert / serialize result
+        return detail::make_comp_result<ResourceT>(eval_res);
+    };
+
+    auto is_volatile = type == res_type::volatile_;
+    auto is_persisted = type == res_type::normal;
+    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_volatile, is_persisted);
+    return slot->template create_handle<ResourceT>();
+}
+} // namespace res::detail

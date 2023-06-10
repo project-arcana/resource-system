@@ -31,7 +31,7 @@ namespace
 cc::string shorthash(hash const& h)
 {
     auto p = reinterpret_cast<uint8_t const*>(&h);
-    auto constexpr size = 6;
+    auto constexpr size = 4;
     static constexpr auto hex = "0123456789ABCDEF";
     auto s = cc::string::uninitialized(size * 2 + 2);
     for (auto i = 0; i < size; ++i)
@@ -44,6 +44,10 @@ cc::string shorthash(hash const& h)
     s.back() = ']';
     return s;
 }
+cc::string shorthash(res_hash const& h) { return cc::format("\u001b[36m%s\u001b[0m", shorthash((hash)h)); }
+cc::string shorthash(invoc_hash const& h) { return cc::format("\u001b[35m%s\u001b[0m", shorthash((hash)h)); }
+cc::string shorthash(content_hash const& h) { return cc::format("\u001b[34m%s\u001b[0m", shorthash((hash)h)); }
+cc::string shorthash(comp_hash const& h) { return cc::format("\u001b[32m%s\u001b[0m", shorthash((hash)h)); }
 
 // TODO: flat?
 struct res_desc
@@ -243,8 +247,8 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
 {
     // make hash
     cc::sha1_builder sha1;
-    sha1.add(cc::as_byte_span(desc.name));
     sha1.add(cc::as_byte_span(desc.algo_hash));
+    sha1.add(cc::as_byte_span(desc.type_hash));
     auto const hash = res::detail::finalize_as<comp_hash>(sha1);
 
     // read: check if comp already known
@@ -254,6 +258,8 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
                                          // TODO: more?
                                          if (prev_desc.algo_hash != desc.algo_hash)
                                              LOG_WARN("computation with inconsistent algo hash");
+                                         if (prev_desc.type_hash != desc.type_hash)
+                                             LOG_WARN("computation with inconsistent type hash");
                                      });
 
     // write: add to map
@@ -386,6 +392,9 @@ cc::optional<res::base::content_ref> res::base::ResourceSystem::try_get_resource
             m->queue_compute_content_of_resource.push_back(res);
         }
     }
+
+    if (!result.has_value())
+        LOG_VERBOSE("no content available for res %s", shorthash(res));
 
     // NOTE: result can be outdated
     return result;
@@ -549,8 +558,8 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
                 auto ok = m->res_store.modify(res,
                                               [&](res_desc& desc)
                                               {
-                                                  if (desc.content_gen == gen)
-                                                      return; // already up to date
+                                                  if (desc.content_gen == gen && desc.content_data.has_value())
+                                                      return; // already up to date with content
 
                                                   desc.content_gen = gen;
                                                   desc.content_name = content_hash;
@@ -568,6 +577,9 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     // 3.1. query content for all args
     auto has_all_arg_content = true;
     args_content.resize(args.size());
+#if ENABLE_VERBOSE_LOG
+    cc::string dbg_s_missing_content;
+#endif
     for (auto i : cc::indices_of(args))
     {
         // NOTE: outdated counts as invalid here
@@ -575,13 +587,20 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
             arg_content.has_value() && !arg_content.value().is_outdated)
             args_content[i] = arg_content.value();
         else
+        {
             has_all_arg_content = false;
+#if ENABLE_VERBOSE_LOG
+            if (!dbg_s_missing_content.empty())
+                dbg_s_missing_content += ", ";
+            dbg_s_missing_content += shorthash(args[i]);
+#endif
+        }
     }
 
     // not all args available? requeue
     if (!has_all_arg_content)
     {
-        LOG_VERBOSE("res %s requeue because not all arg contents are available", shorthash(res));
+        LOG_VERBOSE("res %s requeue, missing content for res: (%s)", shorthash(res), dbg_s_missing_content);
         auto lock = std::lock_guard{queue_mutex};
         queue.push_back(res);
         return true;
@@ -651,7 +670,7 @@ void res::base::ResourceSystem::invalidate_volatile_resources()
 void res::base::ResourceSystem::process_all()
 {
     // DEBUG
-    // auto max_tries = 100;
+    auto max_tries = 100;
 
     // not locked because this is fine to be approximative
     while (!m->queue_compute_content_of_resource.empty() || !m->queue_compute_content_hash_of_resource.empty())
@@ -664,8 +683,11 @@ void res::base::ResourceSystem::process_all()
         if (!m->queue_compute_content_of_resource.empty())
             impl_process_queue_res(true);
 
-        // if (max_tries-- < 0)
-        //     break;
+        if (max_tries-- < 0)
+        {
+            LOG_WARN("max tries in process_all reached");
+            break;
+        }
     }
 }
 
