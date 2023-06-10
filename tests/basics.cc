@@ -168,6 +168,7 @@ TEST("res invoc caching")
     // two resources defined with different paths but the same input content
     auto r0 = res::define(f_identity, c3);
     auto r1 = res::define(f_identity, h0);
+    auto r2 = res::define(f_identity, 3.f);
 
     CHECK(eval_count == 0);
 
@@ -178,6 +179,10 @@ TEST("res invoc caching")
     r1.try_get();
     res::system().process_all();
     CHECK(eval_count == 1); // should have used cached invocation
+
+    r2.try_get();
+    res::system().process_all();
+    CHECK(eval_count == 1); // should have used cached invocation even if used a constant
 }
 
 
