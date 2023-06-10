@@ -65,6 +65,8 @@ struct content_ref
 
     void const* data_ptr = nullptr;
 
+    cc::span<std::byte const> serialized_data;
+
     // TODO: more elaborate error type?
     cc::string_view error_msg;
 

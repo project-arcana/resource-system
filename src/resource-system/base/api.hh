@@ -182,6 +182,20 @@ public:
     // NOTE: THIS IS DEBUG API
     void process_all();
 
+    // persistence API
+public:
+    /// adds all given invocations to the invoc store
+    /// NOTE: not cheap
+    void inject_invoc_cache(cc::span<cc::pair<base::invoc_hash, base::content_hash> const> invocs);
+
+    /// returns a vector of all invocations to be persisted but not yet known
+    /// NOTE: not cheap
+    cc::vector<cc::pair<base::invoc_hash, base::content_hash>> collect_all_persistent_invocations(cc::set<base::invoc_hash> const& known_invocs);
+
+    /// collect a list of all available content refs (of the given list) that can be persisted
+    /// NOTE: not cheap
+    cc::vector<content_ref> collect_all_persistent_content(cc::span<base::content_hash const> contents);
+
     // internal core operations
     // TODO: does it make sense to expose these?
 private:

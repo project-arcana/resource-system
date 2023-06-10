@@ -189,15 +189,3 @@ TEST("res invoc caching")
 // TODO: non-moveable types as args
 // TODO: error handling
 // TODO: MCT
-
-// TODO: require static res::node and detect name clashes globally
-//   static auto n_add = res::node("stuff/add", [](...) { ... });
-//   anon nodes that are only runtime cached but not persisted?
-
-// TODO: test that "baked-in" and handle params are cached equally
-//   i.e.:
-//     auto c = res::create(3.f);
-//     auto n = res::node("...add", []...);
-//     auto h0 = res::define(n, 3.f, c);
-//     auto h1 = res::define(n, c, c);
-//     -> should only be one invocation

@@ -6,6 +6,7 @@
 #include <clean-core/indices_of.hh>
 #include <clean-core/intrinsics.hh>
 #include <clean-core/map.hh>
+#include <clean-core/set.hh>
 #include <clean-core/vector.hh>
 
 #include <rich-log/log.hh>
@@ -28,7 +29,7 @@ namespace res::base
 {
 namespace
 {
-cc::string shorthash(hash const& h)
+[[maybe_unused]] cc::string shorthash(hash const& h)
 {
     auto p = reinterpret_cast<uint8_t const*>(&h);
     auto constexpr size = 4;
@@ -44,10 +45,10 @@ cc::string shorthash(hash const& h)
     s.back() = ']';
     return s;
 }
-cc::string shorthash(res_hash const& h) { return cc::format("\u001b[36m%s\u001b[0m", shorthash((hash)h)); }
-cc::string shorthash(invoc_hash const& h) { return cc::format("\u001b[35m%s\u001b[0m", shorthash((hash)h)); }
-cc::string shorthash(content_hash const& h) { return cc::format("\u001b[34m%s\u001b[0m", shorthash((hash)h)); }
-cc::string shorthash(comp_hash const& h) { return cc::format("\u001b[32m%s\u001b[0m", shorthash((hash)h)); }
+[[maybe_unused]] cc::string shorthash(res_hash const& h) { return cc::format("\u001b[36m%s\u001b[0m", shorthash((hash)h)); }
+[[maybe_unused]] cc::string shorthash(invoc_hash const& h) { return cc::format("\u001b[35m%s\u001b[0m", shorthash((hash)h)); }
+[[maybe_unused]] cc::string shorthash(content_hash const& h) { return cc::format("\u001b[34m%s\u001b[0m", shorthash((hash)h)); }
+[[maybe_unused]] cc::string shorthash(comp_hash const& h) { return cc::format("\u001b[32m%s\u001b[0m", shorthash((hash)h)); }
 
 // TODO: flat?
 struct res_desc
@@ -82,6 +83,7 @@ struct content_desc
     computation_result content;
 
     bool has_data() const { return content.serialized_data.has_value() || content.runtime_data.has_value() || content.error_data.has_value(); }
+    bool has_serializable_data() const { return content.serialized_data.has_value() || content.error_data.has_value(); }
 
     content_ref make_ref(int gen) const
     {
@@ -96,6 +98,9 @@ struct content_desc
             // either here or directly on load
             // NOTE: the computation knows how to deserialize values so the actual location is not that clear
             r.data_ptr = content.runtime_data.value().data_ptr;
+
+            if (content.serialized_data.has_value())
+                r.serialized_data = content.serialized_data.value().blob;
         }
         return r;
     }
@@ -104,11 +109,8 @@ struct content_desc
 // TODO: flat?
 struct invoc_desc
 {
-    // TODO: do we really need to store this?
-    // comp_hash comp;
-    // cc::vector<content_hash> args;
-
     content_hash content;
+    bool is_persisted = false;
 };
 
 content_hash make_content_hash(computation_result const& res, invoc_hash invoc, cc::function_ptr<content_hash(void const*)> make_hash, bool is_volatile)
@@ -209,6 +211,21 @@ struct MemoryStore
             return false;
     }
 
+    // MutF: (cc::map<HashT, ValueT>&) -> void
+    template <class MutF>
+    void modify_many(MutF&& mut_f)
+    {
+        auto lock = std::unique_lock{_mutex};
+        mut_f(_data);
+    }
+    // ReadF: (cc::map<HashT, ValueT> const&) -> void
+    template <class ReadF>
+    void read_many(ReadF&& read_f)
+    {
+        auto lock = std::shared_lock{_mutex};
+        read_f((cc::map<HashT, ValueT> const&)_data);
+    }
+
 private:
     cc::map<HashT, ValueT> _data;
     std::shared_mutex _mutex;
@@ -274,6 +291,8 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
 
 cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::define_resource(resource_desc const& desc)
 {
+    CC_ASSERT(desc.is_volatile && desc.is_persisted && "persisted volatile does not make sense. we would just senselessly write data to disk");
+
     ref_count* counter = nullptr;
 
     // make hash
@@ -643,7 +662,10 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
         // store result in invoc store
         // we always set this
         // due to environment non-determinism, this might not be the same hash as before
-        m->invoc_store.set(invoc, invoc_desc{content_hash});
+        // NOTE: theoretically, the same invoc hash could be reached via a persisted and non-persisted resource
+        //       this can only happen if "is_persisted" is set per resource and not per comp
+        //       in that case, we might want to do a at-least-one policy here
+        m->invoc_store.set(invoc, invoc_desc{content_hash, is_persisted});
 
         // store result in res store
         auto res_ok = m->res_store.modify(res,
@@ -670,7 +692,7 @@ void res::base::ResourceSystem::invalidate_volatile_resources()
 void res::base::ResourceSystem::process_all()
 {
     // DEBUG
-    auto max_tries = 100;
+    auto max_tries = 1000;
 
     // not locked because this is fine to be approximative
     while (!m->queue_compute_content_of_resource.empty() || !m->queue_compute_content_hash_of_resource.empty())
@@ -689,6 +711,48 @@ void res::base::ResourceSystem::process_all()
             break;
         }
     }
+}
+
+void res::base::ResourceSystem::inject_invoc_cache(cc::span<const cc::pair<invoc_hash, content_hash>> invocs)
+{
+    m->invoc_store.modify_many(
+        [&](cc::map<invoc_hash, invoc_desc>& data)
+        {
+            for (auto [invoc, content] : invocs)
+            {
+                auto& d = data[invoc];
+                d.content = content;
+                d.is_persisted = true;
+            }
+        });
+}
+
+cc::vector<cc::pair<res::base::invoc_hash, res::base::content_hash>> res::base::ResourceSystem::collect_all_persistent_invocations(cc::set<base::invoc_hash> const& known_invocs)
+{
+    cc::vector<cc::pair<res::base::invoc_hash, res::base::content_hash>> res;
+    m->invoc_store.read_many(
+        [&](cc::map<invoc_hash, invoc_desc> const& data)
+        {
+            for (auto&& [invoc, desc] : data)
+                if (desc.is_persisted && !known_invocs.contains(invoc))
+                    res.emplace_back(invoc, desc.content);
+        });
+    return res;
+}
+
+cc::vector<res::base::content_ref> res::base::ResourceSystem::collect_all_persistent_content(cc::span<const content_hash> contents)
+{
+    int curr_gen = generation;
+
+    cc::vector<res::base::content_ref> res;
+    m->content_store.read_many(
+        [&](cc::map<content_hash, content_desc> const& data)
+        {
+            for (auto content : contents)
+                if (auto p_desc = data.get_ptr(content); p_desc && p_desc->has_serializable_data())
+                    res.push_back(p_desc->make_ref(curr_gen));
+        });
+    return res;
 }
 
 cc::optional<res::base::content_ref> res::base::ResourceSystem::query_content(content_hash hash)
