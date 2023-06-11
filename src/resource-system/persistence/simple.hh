@@ -3,12 +3,14 @@
 #include <clean-core/map.hh>
 #include <clean-core/set.hh>
 #include <clean-core/string.hh>
+#include <clean-core/optional.hh>
 #include <clean-core/unique_ptr.hh>
 #include <clean-core/vector.hh>
 
 #include <mutex>
 
 #include <resource-system/base/hash.hh>
+#include <resource-system/base/comp_result.hh>
 
 // simple resource persistence layer for now
 // we have to persist two stores:
@@ -43,6 +45,7 @@ class SimplePersistentStore
 {
 public:
     explicit SimplePersistentStore(cc::string base_dir, simple_persistence_config cfg = {});
+    ~SimplePersistentStore();
 
     // loads persistence info from file and injects it into the resource system
     // returns false on error
@@ -53,13 +56,8 @@ public:
     // returns false on error
     bool save();
 
-private:
-    cc::string invoc_filename() const;
-    cc::string content_filename() const;
-    cc::string content_data_filename(int file) const;
-
-    void close_open_data();
-    void ensure_open_data(uint32_t file);
+    // tries to look up missing content
+    cc::optional<res::base::computation_result> try_get_content(base::content_hash hash);
 
     // types
 private:
@@ -71,6 +69,16 @@ private:
     };
     static_assert(sizeof(content_info) == 16);
     struct content_data;
+
+private:
+    cc::string invoc_filename() const;
+    cc::string content_filename() const;
+    cc::string content_data_filename(int file) const;
+
+    void close_open_data();
+    void ensure_open_data(uint32_t file);
+
+    res::base::computation_result get_content_from_info(content_info info);
 
     // config
 private:
@@ -87,6 +95,8 @@ private:
 
     // for now simply mutex everything public...
     std::mutex _mutex;
+
+    bool _is_loaded = false;
 };
 
 } // namespace res::persistence

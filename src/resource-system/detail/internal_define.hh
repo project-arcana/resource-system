@@ -27,7 +27,8 @@
 
 namespace res::detail
 {
-resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile, bool is_persisted);
+resource_slot* get_or_create_resource_slot(
+    res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile, bool is_persisted, base::deserialize_fun_ptr deserialize);
 
 enum class res_type
 {
@@ -110,7 +111,7 @@ auto define_constant(T value) -> handle<const_to_resource<T>>
 
     auto is_volatile = false;
     auto is_persisted = false;
-    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), {}, is_volatile, is_persisted);
+    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), {}, is_volatile, is_persisted, resource_traits<ResourceT>::make_deserialize());
     return slot->template create_handle<ResourceT>();
 }
 
@@ -184,7 +185,8 @@ auto define_res_via_lambda(base::hash algo_hash, res_type type, FunT&& fun, Args
 
     auto is_volatile = type == res_type::volatile_;
     auto is_persisted = type == res_type::normal;
-    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_volatile, is_persisted);
+    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_volatile, is_persisted,
+                                                    resource_traits<ResourceT>::make_deserialize());
     return slot->template create_handle<ResourceT>();
 }
 } // namespace res::detail

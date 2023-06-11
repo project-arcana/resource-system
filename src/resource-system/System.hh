@@ -7,7 +7,8 @@
 
 namespace res::detail
 {
-detail::resource_slot* get_or_create_resource_slot(res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile, bool is_persisted);
+detail::resource_slot* get_or_create_resource_slot(
+    res::base::computation_desc desc, cc::span<res::base::res_hash const> args, bool is_volatile, bool is_persisted, base::deserialize_fun_ptr deserialize);
 }
 
 namespace res
@@ -43,6 +44,7 @@ private:
     friend detail::resource_slot* detail::get_or_create_resource_slot(res::base::computation_desc desc,
                                                                       cc::span<res::base::res_hash const> args,
                                                                       bool is_volatile,
-                                                                      bool is_persisted);
+                                                                      bool is_persisted,
+                                                                      base::deserialize_fun_ptr deserialize);
 };
 } // namespace res

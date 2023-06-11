@@ -9,10 +9,10 @@
 
 namespace res::base
 {
+struct computation_result;
 
 struct content_serialized_data
 {
-    type_hash type;
     cc::vector<std::byte> blob;
 
     // noncopyable -> ensure ptr stability
@@ -24,9 +24,21 @@ struct content_serialized_data
 };
 struct content_runtime_data
 {
-    void* data_ptr;
-    cc::function_ptr<void(void*)> deleter; // can be nullptr if data_ptr just points into serialized data
+    void* data_ptr = nullptr;
+    cc::function_ptr<void(void*)> deleter = nullptr; // can be nullptr if data_ptr just points into serialized data
 };
+
+using deserialize_fun_ptr = cc::function_ptr<content_runtime_data(cc::span<std::byte const>)>;
+
+struct content_runtime_data_typed
+{
+    // identifies the runtime "type"
+    // nullptr means non-serializable
+    deserialize_fun_ptr deserialize = nullptr;
+
+    content_runtime_data data;
+};
+
 struct content_error_data
 {
     cc::string message;
@@ -35,7 +47,9 @@ struct content_error_data
 struct computation_result
 {
     cc::optional<content_serialized_data> serialized_data;
-    cc::optional<content_runtime_data> runtime_data;
+    // NOTE: for now we assume that this is basically 1 element in most cases
+    //       maybe 2 or 3 for really small resources
+    cc::vector<content_runtime_data_typed> runtime_data;
     cc::optional<content_error_data> error_data;
 
     // noncopyable

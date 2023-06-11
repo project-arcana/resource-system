@@ -45,10 +45,10 @@ namespace
     s.back() = ']';
     return s;
 }
-[[maybe_unused]] cc::string shorthash(res_hash const& h) { return cc::format("\u001b[36m%s\u001b[0m", shorthash((hash)h)); }
+[[maybe_unused]] cc::string shorthash(res_hash const& h) { return cc::format("\u001b[32m%s\u001b[0m", shorthash((hash)h)); }
 [[maybe_unused]] cc::string shorthash(invoc_hash const& h) { return cc::format("\u001b[35m%s\u001b[0m", shorthash((hash)h)); }
 [[maybe_unused]] cc::string shorthash(content_hash const& h) { return cc::format("\u001b[34m%s\u001b[0m", shorthash((hash)h)); }
-[[maybe_unused]] cc::string shorthash(comp_hash const& h) { return cc::format("\u001b[32m%s\u001b[0m", shorthash((hash)h)); }
+[[maybe_unused]] cc::string shorthash(comp_hash const& h) { return cc::format("\u001b[36m%s\u001b[0m", shorthash((hash)h)); }
 
 // TODO: flat?
 struct res_desc
@@ -58,6 +58,8 @@ struct res_desc
 
     bool is_volatile = false;
     bool is_persisted = false;
+
+    deserialize_fun_ptr deserialize = nullptr;
 
     // NOTE: this only tracks external references
     //       internal references are part of the GC process
@@ -80,28 +82,82 @@ struct content_desc
 {
     // TODO: refcounting
 
-    computation_result content;
+    mutable computation_result content;
+    // TODO: this is currently needed due to lazy deser
+    //       that's also the reason for "mutable" here
+    mutable std::mutex content_mutex_runtime_data;
 
-    bool has_data() const { return content.serialized_data.has_value() || content.runtime_data.has_value() || content.error_data.has_value(); }
+    content_desc() = default;
+    content_desc(computation_result content) : content(cc::move(content)) {}
+
+    bool has_data() const { return content.serialized_data.has_value() || !content.runtime_data.empty() || content.error_data.has_value(); }
     bool has_serializable_data() const { return content.serialized_data.has_value() || content.error_data.has_value(); }
 
-    content_ref make_ref(int gen) const
+    // NOTE: is kinda not const because it performs lazy deserialization
+    //       but this is a "mutable cached internal" scenario
+    content_ref make_ref(int gen, content_hash hash, deserialize_fun_ptr deserialize) const
     {
         CC_ASSERT(has_data() && "how does this happen?");
         content_ref r;
         r.generation = gen;
+        r.hash = hash;
+
+        {
+            if (content.error_data.has_value())
+                r.error_msg = content.error_data.value().message;
+            else
+            {
+                // TODO: less locking ...
+                auto lock = std::lock_guard(content_mutex_runtime_data);
+                auto need_deser = true;
+
+                // try to find deserialized runtime data with the given deserializer
+                for (auto& runtime_data : content.runtime_data)
+                {
+                    if (runtime_data.deserialize == deserialize)
+                    {
+                        need_deser = false;
+                        r.data_ptr = runtime_data.data.data_ptr;
+                        break;
+                    }
+                }
+
+                // if none available, deserialize
+                if (need_deser)
+                {
+                    CC_ASSERT(deserialize && "no runtime data + no deserializer should not be possible");
+                    CC_ASSERT(content.serialized_data.has_value() && "no runtime data + no serialized data should not be possible");
+
+                    LOG_VERBOSE("content %s is deserialized using %s", shorthash(hash), (void*)deserialize);
+                    auto& data = content.runtime_data.emplace_back();
+                    data.deserialize = deserialize;
+                    data.data = deserialize(content.serialized_data.value().blob);
+                    r.data_ptr = data.data.data_ptr;
+                }
+
+                // also return ref to any serialized data
+                if (content.serialized_data.has_value())
+                    r.serialized_data = content.serialized_data.value().blob;
+            }
+        }
+
+        return r;
+    }
+    content_ref make_serialize_ref(int gen, content_hash hash) const
+    {
+        CC_ASSERT(has_serializable_data());
+        content_ref r;
+        r.generation = gen;
+        r.hash = hash;
+
         if (content.error_data.has_value())
             r.error_msg = content.error_data.value().message;
         else
         {
-            CC_ASSERT(content.runtime_data.has_value() && "TODO: implement deserialization");
-            // either here or directly on load
-            // NOTE: the computation knows how to deserialize values so the actual location is not that clear
-            r.data_ptr = content.runtime_data.value().data_ptr;
-
-            if (content.serialized_data.has_value())
-                r.serialized_data = content.serialized_data.value().blob;
+            CC_ASSERT(content.serialized_data.has_value());
+            r.serialized_data = content.serialized_data.value().blob;
         }
+
         return r;
     }
 };
@@ -111,6 +167,9 @@ struct invoc_desc
 {
     content_hash content;
     bool is_persisted = false;
+
+    // TODO:
+    // if we had an was_loaded_from_content_provider, we could make save-to-persistence cheaper
 };
 
 content_hash make_content_hash(computation_result const& res, invoc_hash invoc, cc::function_ptr<content_hash(void const*)> make_hash, bool is_volatile)
@@ -119,7 +178,6 @@ content_hash make_content_hash(computation_result const& res, invoc_hash invoc, 
     if (res.serialized_data.has_value()) // normal case
     {
         sha1.add(cc::as_byte_span(uint32_t(1000)));
-        sha1.add(cc::as_byte_span(res.serialized_data.value().type));
         sha1.add(res.serialized_data.value().blob);
     }
     else if (res.error_data.has_value()) // error case
@@ -127,14 +185,14 @@ content_hash make_content_hash(computation_result const& res, invoc_hash invoc, 
         sha1.add(cc::as_byte_span(uint32_t(2000)));
         sha1.add(cc::as_byte_span(res.error_data.value().message));
     }
-    else if (res.runtime_data.has_value() && make_hash) // non-serializable BUT hashable case
+    else if (res.runtime_data.size() == 1 && make_hash) // non-serializable BUT hashable case
     {
-        sha1.add(cc::as_byte_span(uint32_t(4000)));
-        sha1.add(cc::as_byte_span(make_hash(res.runtime_data.value().data_ptr)));
+        sha1.add(cc::as_byte_span(uint32_t(3000)));
+        sha1.add(cc::as_byte_span(make_hash(res.runtime_data[0].data.data_ptr)));
     }
     else // non-serializable + non-hashable case
     {
-        CC_ASSERT(res.runtime_data.has_value());
+        CC_ASSERT(res.runtime_data.size() == 1 && "this should not happen. if we have multiple runtime repr, it means it was serializable and the serialized data is deduplicated");
         sha1.add(cc::as_byte_span(uint32_t(4000)));
         sha1.add(cc::as_byte_span(invoc));
 
@@ -254,6 +312,10 @@ struct res::base::ResourceSystem::impl
     std::mutex queue_compute_content_of_resource_mutex;
     cc::ringbuffer<res_hash> queue_compute_content_hash_of_resource;
     std::mutex queue_compute_content_hash_of_resource_mutex;
+
+    // content provider
+    cc::vector<cc::unique_function<cc::optional<computation_result>(content_hash)>> content_provider;
+    std::shared_mutex content_provider_mutex;
 };
 
 res::base::ResourceSystem::ResourceSystem() { m = cc::make_unique<impl>(); }
@@ -291,7 +353,7 @@ res::base::comp_hash res::base::ResourceSystem::define_computation(computation_d
 
 cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::define_resource(resource_desc const& desc)
 {
-    CC_ASSERT(desc.is_volatile && desc.is_persisted && "persisted volatile does not make sense. we would just senselessly write data to disk");
+    CC_ASSERT(!(desc.is_volatile && desc.is_persisted) && "persisted volatile does not make sense. we would just senselessly write data to disk");
 
     ref_count* counter = nullptr;
 
@@ -308,6 +370,7 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
                                     {
                                         CC_ASSERT(desc.computation == prev_desc.comp && "res_hash collision");
                                         CC_ASSERT(desc.args.equals_content(prev_desc.args) && "res_hash collision");
+                                        CC_ASSERT(desc.deserialize == prev_desc.deserialize && "res_hash collision");
 
                                         counter = prev_desc.ref_counter;
                                     });
@@ -321,6 +384,7 @@ cc::pair<res::base::res_hash, res::base::ref_count*> res::base::ResourceSystem::
         rdesc.is_volatile = desc.is_volatile;
         rdesc.is_persisted = desc.is_persisted;
         rdesc.ref_counter = cc::alloc<ref_count>();
+        rdesc.deserialize = desc.deserialize;
         counter = rdesc.ref_counter;
 
 #if ENABLE_VERBOSE_LOG
@@ -476,6 +540,19 @@ cc::optional<res::base::content_hash> res::base::ResourceSystem::try_get_resourc
     return result;
 }
 
+res::base::content_ref res::base::ResourceSystem::set_and_get_content_if_new(content_hash hash, int gen, deserialize_fun_ptr deserializer, computation_result comp_result)
+{
+    // for the combined semantics, we use modify_many here
+    content_ref content_data;
+    m->content_store.modify_many(
+        [&](cc::map<base::content_hash, content_desc>& data)
+        {
+            content_desc& desc = data.get_or_create(hash, [&] { return cc::move(comp_result); });
+            content_data = desc.make_ref(gen, hash, deserializer);
+        });
+    return content_data;
+}
+
 bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
 {
     res_hash res;
@@ -508,6 +585,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
     auto is_up_to_date = false;
     auto is_volatile = false;
     auto is_persisted = false;
+    deserialize_fun_ptr deserialize = nullptr;
     comp_hash comp;
     auto found_res = m->res_store.get(res,
                                       [&](res_desc const& desc)
@@ -522,6 +600,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
                                           args = desc.args; // copy
                                           is_volatile = desc.is_volatile;
                                           is_persisted = desc.is_persisted;
+                                          deserialize = desc.deserialize;
                                       });
     CC_ASSERT(found_res && "overzealous GC?");
 
@@ -568,7 +647,11 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
             // TODO: or ask someone who knows
             cc::optional<content_ref> content_data;
             if (need_content)
-                content_data = this->query_content(content_hash);
+            {
+                content_data = this->query_content(content_hash, deserialize);
+                if (!content_data.has_value())
+                    LOG_WARN("content %s was not found in content store. missing persistence?", shorthash(content_hash));
+            }
 
             if (!need_content || content_data.has_value())
             {
@@ -643,21 +726,28 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
         // TODO: split computation, ...
         LOG_VERBOSE("res %s compute content ...", shorthash(res));
         auto comp_result = compute_resource(args_content);
-        CC_ASSERT(comp_result.error_data.has_value() || comp_result.runtime_data.has_value());
 
         auto content_hash = make_content_hash(comp_result, invoc, make_hash, is_volatile);
 
+#if ENABLE_VERBOSE_LOG
         if (comp_result.serialized_data.has_value())
-            LOG_VERBOSE("content %s is serialized %s", shorthash(content_hash), comp_result.serialized_data.value().blob);
+        {
+            auto data = cc::span(comp_result.serialized_data.value().blob);
+            auto ext = "";
+            if (data.size() > 16)
+            {
+                data = data.subspan(0, 16);
+                ext = " ...";
+            }
+            LOG_VERBOSE("content %s is serialized %s%s", shorthash(content_hash), data, ext);
+        }
+#endif
 
-        // store result in content store
+        // store result in content store and make content ref
         // CAUTION: this must only be set if the content is new
         //          otherwise we're invalidating previously valid references to the data
-        m->content_store.set_if_new(content_hash, content_desc{cc::move(comp_result)});
-
-        // NOTE: we always have to do this second lookup to ensure we get the reference that is actually in the db
-        // TODO: could be merged with previous set into more complex op
-        auto content_data = m->content_store.get(content_hash, [gen](content_desc const& desc) { return desc.make_ref(gen); });
+        auto content_data = this->set_and_get_content_if_new(content_hash, gen, deserialize, cc::move(comp_result));
+        // CAUTION: comp_result is dead here
 
         // store result in invoc store
         // we always set this
@@ -750,14 +840,44 @@ cc::vector<res::base::content_ref> res::base::ResourceSystem::collect_all_persis
         {
             for (auto content : contents)
                 if (auto p_desc = data.get_ptr(content); p_desc && p_desc->has_serializable_data())
-                    res.push_back(p_desc->make_ref(curr_gen));
+                    res.push_back(p_desc->make_serialize_ref(curr_gen, content));
         });
     return res;
 }
 
-cc::optional<res::base::content_ref> res::base::ResourceSystem::query_content(content_hash hash)
+void res::base::ResourceSystem::inject_content_provider(cc::unique_function<cc::optional<computation_result>(content_hash)> provider)
 {
-    return m->content_store.get(hash, [gen = int(generation)](content_desc const& desc) { return desc.make_ref(gen); });
+    auto lock = std::unique_lock(m->content_provider_mutex);
+    m->content_provider.push_back(cc::move(provider));
+}
+
+cc::optional<res::base::content_ref> res::base::ResourceSystem::query_content(content_hash hash, deserialize_fun_ptr deserializer)
+{
+    auto data = m->content_store.get(
+        hash, [hash, deserializer, gen = int(generation)](content_desc const& desc) { return desc.make_ref(gen, hash, deserializer); });
+
+    if (!data.has_value())
+    {
+        LOG_VERBOSE("content %s has no entry in content store. trying %s fallbacks...", shorthash(hash), m->content_provider.size());
+
+        // TODO: should this also be "async"?
+        auto lock = std::shared_lock(m->content_provider_mutex);
+        for (auto const& provider : m->content_provider)
+        {
+            auto res = provider(hash);
+            if (res.has_value())
+            {
+                LOG_VERBOSE("  .. found content!");
+
+                // store and deserialize
+                return this->set_and_get_content_if_new(hash, generation, deserializer, cc::move(res).value());
+            }
+            else
+                LOG_VERBOSE("  .. no content");
+        }
+    }
+
+    return data;
 }
 
 res::base::invoc_hash res::base::ResourceSystem::define_invocation(comp_hash const& computation, cc::span<content_hash const> args)

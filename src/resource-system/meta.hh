@@ -163,6 +163,45 @@ struct resource_traits
         return *reinterpret_cast<T const*>(p);
     }
 
+    static base::content_runtime_data deserialize(cc::span<std::byte const> data)
+    {
+        base::content_runtime_data res;
+
+        if constexpr (detail::is_span<T>::value)
+        {
+            using element_t = cc::collection_element_t<T>;
+            res.data_ptr = cc::alloc<T>(data.template reinterpret_as<element_t const>());
+            res.deleter = [](void* p) { cc::free(reinterpret_cast<T*>(p)); };
+        }
+        else if constexpr (std::is_same_v<T, cc::string_view>)
+        {
+            res.data_ptr = cc::alloc<cc::string_view>(cc::string_view((char const*)data.data(), data.size()));
+            res.deleter = [](void* p) { cc::free(reinterpret_cast<cc::string_view*>(p)); };
+        }
+        else if constexpr (std::is_trivially_copyable_v<T>)
+        {
+            res.data_ptr = (void*)data.data();
+            res.deleter = nullptr; // point directly into serialized data
+        }
+        else
+        {
+            static_assert(cc::always_false<T>, "no idea how to make deserializer for T");
+        }
+
+        return res;
+    }
+
+    static base::deserialize_fun_ptr make_deserialize()
+    {
+        if constexpr (detail::is_span<T>::value)
+            return &deserialize;
+        else if constexpr (std::is_same_v<T, cc::string_view>)
+            return &deserialize;
+        else if constexpr (std::is_trivially_copyable_v<T>)
+            return &deserialize;
+        else
+            return nullptr;
+    }
 
     template <class ResultT>
     static void make_comp_result(base::computation_result& res, ResultT value)
@@ -171,72 +210,33 @@ struct resource_traits
         {
             static_assert(cc::is_any_contiguous_range_of_pods<ResultT>);
 
-            // serialize
-            {
-                base::content_serialized_data ser;
-                auto bindata = cc::as_byte_span(value);
-                ser.type = base::get_type_hash<T>();
-                ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
-                std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
-                res.serialized_data = cc::move(ser);
-            }
-
-            // runtime data
-            {
-                using element_t = cc::collection_element_t<ResultT>;
-                base::content_runtime_data data;
-                data.data_ptr = cc::alloc<T>(cc::as_byte_span(res.serialized_data.value().blob).reinterpret_as<element_t const>());
-                data.deleter = [](void* p) { cc::free(reinterpret_cast<T*>(p)); };
-                res.runtime_data = cc::move(data);
-            }
+            base::content_serialized_data ser;
+            auto bindata = cc::as_byte_span(value);
+            ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
+            std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
+            res.serialized_data = cc::move(ser);
         }
         else if constexpr (std::is_same_v<T, cc::string_view>)
         {
-            // serialize
-            {
-                base::content_serialized_data ser;
-                auto bindata = cc::as_byte_span(cc::string_view(value));
-                ser.type = base::get_type_hash<T>();
-                ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
-                std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
-                res.serialized_data = cc::move(ser);
-            }
-
-            // runtime data
-            {
-                base::content_runtime_data data;
-                auto const& blob = res.serialized_data.value().blob;
-                data.data_ptr = cc::alloc<cc::string_view>(cc::string_view((char const*)blob.data(), blob.size()));
-                data.deleter = [](void* p) { cc::free(reinterpret_cast<cc::string_view*>(p)); };
-                res.runtime_data = cc::move(data);
-            }
+            base::content_serialized_data ser;
+            auto bindata = cc::as_byte_span(cc::string_view(value));
+            ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
+            std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
+            res.serialized_data = cc::move(ser);
         }
         else if constexpr (std::is_trivially_copyable_v<T> && std::is_same_v<ResultT, T>)
         {
-            // serialize
-            {
-                base::content_serialized_data ser;
-                auto bindata = cc::as_byte_span(value);
-                ser.type = base::get_type_hash<T>();
-                ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
-                std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
-                res.serialized_data = cc::move(ser);
-            }
-
-            // runtime data
-            {
-                base::content_runtime_data data;
-                data.data_ptr = res.serialized_data.value().blob.data();
-                data.deleter = nullptr; // point directly into serialized data
-                res.runtime_data = cc::move(data);
-            }
+            base::content_serialized_data ser;
+            auto bindata = cc::as_byte_span(value);
+            ser.blob = cc::vector<std::byte>::uninitialized(bindata.size());
+            std::memcpy(ser.blob.data(), bindata.data(), bindata.size());
+            res.serialized_data = cc::move(ser);
         }
         else // non-serializable
         {
-            base::content_runtime_data data;
-            data.data_ptr = cc::alloc<T>(cc::move(value));
-            data.deleter = [](void* p) { cc::free(reinterpret_cast<T*>(p)); };
-            res.runtime_data = cc::move(data);
+            auto& data = res.runtime_data.emplace_back();
+            data.data.data_ptr = cc::alloc<T>(cc::move(value));
+            data.data.deleter = [](void* p) { cc::free(reinterpret_cast<T*>(p)); };
         }
     }
 };

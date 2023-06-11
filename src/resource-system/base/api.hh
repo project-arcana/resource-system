@@ -85,13 +85,6 @@ struct computation_desc
     // NOTE: the arg content is never outdated
     cc::unique_function<computation_result(cc::span<content_ref const>)> compute_resource;
 
-    // content_ref has serialized_data and no runtime_data
-    // deserialize must set either runtime_data or error_data
-    // runtime_data is allowed to point into serialized_data
-    // this is optional
-    // NOTE: there is no serialize because that's part of compute_resource
-    cc::function_ptr<void(computation_result&)> deserialize = nullptr;
-
     // function that computes the hash of a runtime value without needing serialization
     // this is optional
     cc::function_ptr<content_hash(void const*)> make_runtime_content_hash = nullptr;
@@ -124,6 +117,14 @@ struct resource_desc
 
     // persisted resources cause invoc cache and created content to be saved to disk
     bool is_persisted = true;
+
+    // content_ref has serialized_data and no runtime_data
+    // deserialize must set either runtime_data or error_data
+    // runtime_data is allowed to point into serialized_data
+    // this is optional
+    // NOTE: there is no serialize because that's part of compute_resource
+    // NOTE: we store this is the resource instead of computation to save one store lookup
+    deserialize_fun_ptr deserialize = nullptr;
 };
 
 /// a resource system manages access / computation / lifetimes of resources
@@ -196,17 +197,23 @@ public:
     /// NOTE: not cheap
     cc::vector<content_ref> collect_all_persistent_content(cc::span<base::content_hash const> contents);
 
+    /// adds a fallback provider for content
+    /// TODO: lifetime / cleanup
+    void inject_content_provider(cc::unique_function<cc::optional<computation_result>(content_hash)> provider);
+
     // internal core operations
     // TODO: does it make sense to expose these?
 private:
     // TODO: error states?
-    cc::optional<content_ref> query_content(content_hash hash);
+    cc::optional<content_ref> query_content(content_hash hash, deserialize_fun_ptr deserializer);
 
     // NOTE: this is really fast and does not need DB access
     invoc_hash define_invocation(comp_hash const& computation, cc::span<content_hash const> args);
 
     // NOTE: never returns outdated data
     cc::optional<content_hash> try_get_resource_content_hash(res_hash res, bool enqueue_if_not_found = true);
+
+    content_ref set_and_get_content_if_new(content_hash hash, int gen, deserialize_fun_ptr deserializer, computation_result comp_result);
 
     // queue processing
 private:
