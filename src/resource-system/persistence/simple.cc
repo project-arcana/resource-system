@@ -185,16 +185,16 @@ bool res::persistence::SimplePersistentStore::save()
             };
             auto write_content_raw = [&]
             {
-                CC_ASSERT(content.has_value());
+                CC_ASSERT(content.has_serialized_data());
 
                 char const type = 'V';
                 file.write(&type, 1);
 
-                file.write((char const*)content.serialized_data.data(), content.serialized_data.size());
+                file.write((char const*)content.serialized_data.value().data(), content.serialized_data.value().size());
             };
             auto write_content_compressed = [&](cc::span<std::byte const> cdata)
             {
-                CC_ASSERT(content.has_value());
+                CC_ASSERT(content.has_serialized_data());
 
                 char const type = 'v';
                 file.write(&type, 1);
@@ -202,19 +202,20 @@ bool res::persistence::SimplePersistentStore::save()
                 file.write((char const*)cdata.data(), cdata.size());
             };
 
-            if (content.has_value())
+            if (content.has_serialized_data())
             {
+                auto sdata = content.serialized_data.value();
                 // no compression below 1 kb
-                if (content.serialized_data.size() <= 1024)
+                if (sdata.size() <= 1024)
                 {
                     write_content_raw();
                 }
                 else
                 {
-                    auto compr = babel::zstd::compress(content.serialized_data);
-                    auto saved_bytes = int64_t(compr.size()) - int64_t(content.serialized_data.size());
+                    auto compr = babel::zstd::compress(sdata);
+                    auto saved_bytes = int64_t(compr.size()) - int64_t(sdata.size());
                     // need to save at least 10% and 1kb
-                    auto min_saved_bytes = cc::max(int64_t(1024), int64_t(content.serialized_data.size() / 10));
+                    auto min_saved_bytes = cc::max(int64_t(1024), int64_t(sdata.size() / 10));
                     if (saved_bytes < min_saved_bytes)
                         write_content_raw();
                     else
@@ -291,7 +292,7 @@ cc::optional<res::base::computation_result> res::persistence::SimplePersistentSt
 
 res::base::computation_result res::persistence::SimplePersistentStore::get_content_from_info(content_info info)
 {
-    CC_ASSERT(info.size > 1);
+    CC_ASSERT(info.size >= 1);
 
     // ensure file is mmapped
     this->ensure_open_data(info.file);

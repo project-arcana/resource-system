@@ -40,7 +40,7 @@ enum class res_type
 template <class T>
 T const& get_resource_arg(base::content_ref const& content)
 {
-    CC_ASSERT(content.has_value());
+    CC_ASSERT(content.has_runtime_data());
     return resource_traits<T>::from_content_data_ptr(content.data_ptr);
 }
 

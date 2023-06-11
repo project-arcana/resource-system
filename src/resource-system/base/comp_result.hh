@@ -79,12 +79,13 @@ struct content_ref
 
     void const* data_ptr = nullptr;
 
-    cc::span<std::byte const> serialized_data;
+    cc::optional<cc::span<std::byte const>> serialized_data;
 
     // TODO: more elaborate error type?
     cc::string_view error_msg;
 
-    bool has_value() const { return data_ptr != nullptr; }
-    bool has_error() const { return data_ptr == nullptr; }
+    bool has_runtime_data() const { return data_ptr != nullptr; }
+    bool has_serialized_data() const { return serialized_data.has_value(); }
+    bool has_error() const { return data_ptr == nullptr && !serialized_data.has_value(); }
 };
 } // namespace res::base
