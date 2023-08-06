@@ -57,8 +57,11 @@ struct handle
     ///       use(*d);
     /// NOTE: will return outdated cached values
     ///      (but recomputation is still triggered)
+    /// NOTE: using this on an invalid handle is fine (and returns nullptr)
     T const* try_get() const
     {
+        if (!resource)
+            return nullptr;
         auto data = detail::resource_try_get(*resource);
         return static_cast<T const*>(data);
     }
