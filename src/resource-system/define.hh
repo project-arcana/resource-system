@@ -37,6 +37,9 @@ template <class NodeT, class... Args>
 /// same as
 ///   auto n = res::node_runtime(fun);
 ///   auto r = res::define(n, args...);
+///
+/// CAREFUL: each definition is a new, unique resource!
+/// TODO: do we really want to keep this knowing this? or rename to define_new_runtime?
 template <class Fun, class... Args>
 [[nodiscard]] auto define_runtime(Fun&& fun, Args&&... args)
 {
@@ -46,6 +49,9 @@ template <class Fun, class... Args>
 /// same as
 ///   auto n = res::node_volatile(fun);
 ///   auto r = res::define(n, args...);
+///
+/// CAREFUL: each definition is a new, unique resource!
+/// TODO: do we really want to keep this knowing this? or rename to define_new_runtime?
 template <class Fun, class... Args>
 [[nodiscard]] auto define_volatile(Fun&& fun, Args&&... args)
 {
