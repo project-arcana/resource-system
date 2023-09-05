@@ -118,7 +118,7 @@ auto define_constant(T value) -> handle<const_to_resource<T>>
 template <class T>
 auto wrap_to_handle(T&& v)
 {
-    if constexpr (is_handle<std::remove_reference_t<T>>::value)
+    if constexpr (is_handle<std::decay_t<T>>::value)
         return v;
     else
         return detail::define_constant(cc::forward<T>(v));
