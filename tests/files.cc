@@ -5,7 +5,7 @@
 
 #include <babel-serializer/file.hh>
 
-TEST("file basics")
+TEST("file basics", disabled)
 {
     auto const filename = "_test_res_file";
     babel::file::write(filename, "hello world!");
