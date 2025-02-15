@@ -25,6 +25,9 @@ class Node
 public:
     Node() = default;
 
+    // NOTE: this must never be called after a resource is already requested using this node!
+    Node(Node&&) = default;
+
     // non-copyable / non-movable
     Node(Node const&) = delete;
     Node& operator=(Node const&) = delete;
