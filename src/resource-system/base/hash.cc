@@ -4,6 +4,7 @@
 #include <thread>
 
 #include <clean-core/hash.sha1.hh>
+#include <clean-core/indices_of.hh>
 #include <clean-core/intrinsics.hh>
 #include <clean-core/string_view.hh>
 
@@ -36,4 +37,19 @@ res::base::hash res::base::detail::make_random_unique_hash()
     counter++;
 
     return h;
+}
+
+cc::string res::base::hash::to_hex_string(int bytes) const
+{
+    CC_ASSERT(0 <= bytes && bytes <= 16);
+    auto res = cc::string::uninitialized(bytes * 2);
+    auto data = cc::as_byte_span(*this);
+    static constexpr auto hex = "0123456789ABCDEF";
+    for (auto i : cc::indices_of(bytes))
+    {
+        auto const b = uint8_t(data[i]);
+        res[i * 2 + 0] = hex[b / 16];
+        res[i * 2 + 1] = hex[b % 16];
+    }
+    return res;
 }

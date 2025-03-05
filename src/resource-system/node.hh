@@ -47,6 +47,9 @@ public:
         return detail::define_res_via_lambda(algo_hash, type, fun, cc::forward<Args>(args)...);
     }
 
+    // mainly for debugging purposes
+    base::hash get_algo_hash() const { return algo_hash; }
+
 private:
     Fun fun;
     base::hash algo_hash;

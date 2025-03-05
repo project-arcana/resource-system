@@ -21,6 +21,9 @@ struct alignas(16) hash
 
     constexpr bool operator==(hash const& h) const { return w0 == h.w0 && w1 == h.w1; }
     constexpr bool operator!=(hash const& h) const { return w0 != h.w0 || w1 != h.w1; }
+
+    // converts this hash to a hex string with the given number of bytes (must be 0..16)
+    cc::string to_hex_string(int bytes = 32) const;
 };
 
 struct comp_hash : hash

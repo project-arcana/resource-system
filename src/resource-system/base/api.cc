@@ -172,38 +172,6 @@ struct invoc_desc
     // if we had an was_loaded_from_content_provider, we could make save-to-persistence cheaper
 };
 
-content_hash make_content_hash(computation_result const& res, invoc_hash invoc, cc::function_ptr<content_hash(void const*)> make_hash, bool is_volatile)
-{
-    cc::sha1_builder sha1;
-    if (res.serialized_data.has_value()) // normal case
-    {
-        sha1.add(cc::as_byte_span(uint32_t(1000)));
-        sha1.add(res.serialized_data.value().blob);
-    }
-    else if (res.error_data.has_value()) // error case
-    {
-        sha1.add(cc::as_byte_span(uint32_t(2000)));
-        sha1.add(cc::as_byte_span(res.error_data.value().message));
-    }
-    else if (res.runtime_data.size() == 1 && make_hash) // non-serializable BUT hashable case
-    {
-        sha1.add(cc::as_byte_span(uint32_t(3000)));
-        sha1.add(cc::as_byte_span(make_hash(res.runtime_data[0].data.data_ptr)));
-    }
-    else // non-serializable + non-hashable case
-    {
-        CC_ASSERT(res.runtime_data.size() == 1 && "this should not happen. if we have multiple runtime repr, it means it was serializable and the serialized data is deduplicated");
-        sha1.add(cc::as_byte_span(uint32_t(4000)));
-        sha1.add(cc::as_byte_span(invoc));
-
-        // volatile + non-serializable means we have no idea what the content is
-        // thus we add a basically random value to the hash
-        if (is_volatile)
-            sha1.add(cc::as_byte_span(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
-    }
-    return res::detail::finalize_as<content_hash>(sha1);
-}
-
 // NOTE: these are threadsafe via reader/writer lock
 template <class HashT, class ValueT>
 struct MemoryStore
@@ -290,6 +258,39 @@ private:
 };
 } // namespace
 } // namespace res::base
+
+
+res::base::content_hash res::base::detail::make_content_hash(computation_result const& res, invoc_hash invoc, cc::function_ptr<content_hash(void const*)> make_hash, bool is_volatile)
+{
+    cc::sha1_builder sha1;
+    if (res.serialized_data.has_value()) // normal case
+    {
+        sha1.add(cc::as_byte_span(uint32_t(1000)));
+        sha1.add(res.serialized_data.value().blob);
+    }
+    else if (res.error_data.has_value()) // error case
+    {
+        sha1.add(cc::as_byte_span(uint32_t(2000)));
+        sha1.add(cc::as_byte_span(res.error_data.value().message));
+    }
+    else if (res.runtime_data.size() == 1 && make_hash) // non-serializable BUT hashable case
+    {
+        sha1.add(cc::as_byte_span(uint32_t(3000)));
+        sha1.add(cc::as_byte_span(make_hash(res.runtime_data[0].data.data_ptr)));
+    }
+    else // non-serializable + non-hashable case
+    {
+        CC_ASSERT(res.runtime_data.size() == 1 && "this should not happen. if we have multiple runtime repr, it means it was serializable and the serialized data is deduplicated");
+        sha1.add(cc::as_byte_span(uint32_t(4000)));
+        sha1.add(cc::as_byte_span(invoc));
+
+        // volatile + non-serializable means we have no idea what the content is
+        // thus we add a basically random value to the hash
+        if (is_volatile)
+            sha1.add(cc::as_byte_span(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
+    }
+    return res::detail::finalize_as<content_hash>(sha1);
+}
 
 struct res::base::ResourceSystem::impl
 {
@@ -727,7 +728,7 @@ bool res::base::ResourceSystem::impl_process_queue_res(bool need_content)
         LOG_VERBOSE("res %s compute content ...", shorthash(res));
         auto comp_result = compute_resource(args_content);
 
-        auto content_hash = make_content_hash(comp_result, invoc, make_hash, is_volatile);
+        auto content_hash = detail::make_content_hash(comp_result, invoc, make_hash, is_volatile);
 
 #if ENABLE_VERBOSE_LOG
         if (comp_result.serialized_data.has_value())

@@ -229,4 +229,8 @@ private:
     int volatile generation = 1000;
 };
 
+namespace detail
+{
+content_hash make_content_hash(computation_result const& res, invoc_hash invoc, cc::function_ptr<content_hash(void const*)> make_hash, bool is_volatile);
+}
 } // namespace res::base

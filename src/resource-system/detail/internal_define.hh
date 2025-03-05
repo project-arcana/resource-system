@@ -6,11 +6,13 @@
 #include <clean-core/forward.hh>
 #include <clean-core/move.hh>
 #include <clean-core/tuple.hh>
+#include <clean-core/unique_ptr.hh>
 
 #include <clean-core/hash.sha1.hh>
 
 // TODO: slim down to the api part we need
 #include <resource-system/base/api.hh>
+#include <resource-system/base/hash.hh>
 
 #include <resource-system/handle.hh>
 #include <resource-system/meta.hh>
@@ -24,6 +26,10 @@
 
 // used for serialized typeinfo right now
 #include <typeinfo>
+
+// DEBUG
+// #include <resource-system/detail/log.hh>
+// #include <rich-log/log.hh>
 
 namespace res::detail
 {
@@ -89,6 +95,9 @@ base::computation_result make_comp_result(ResultT value)
     }
 }
 
+// NOTE: this is used to wrap non-resource arguments into handles (that are then constant)
+//       to make sure caching works properly, the "algo_hash" of these is simply the content hash
+// NOTE: for that reason, we currently create some copies of value
 template <class T>
 auto define_constant(T value) -> handle<const_to_resource<T>>
 {
@@ -97,7 +106,25 @@ auto define_constant(T value) -> handle<const_to_resource<T>>
     // TODO: if we have a concept of "injected resources / content", we could do with a single computation
 
     base::computation_desc comp_desc;
-    comp_desc.algo_hash = base::make_random_unique_hash<base::comp_hash>();
+
+    comp_desc.type_hash = res::base::get_type_hash<T>();
+
+    // we immediately create a computation result to get the content hash (to be used as algo hash)
+    {
+        auto res = detail::make_comp_result<ResourceT>(value);
+        // TODO: do we want different args here?
+        auto content_hash = base::detail::make_content_hash(res, base::invoc_hash{}, nullptr, false);
+        static_assert(sizeof(content_hash) == sizeof(comp_desc.algo_hash));
+        std::memcpy(&comp_desc.algo_hash, &content_hash, sizeof(content_hash));
+
+        // if constexpr (std::is_trivially_copyable_v<T>)
+        // LOG("define_constant data V: %s", cc::as_byte_span(value));
+        // LOG("define_constant data S: %s", cc::as_byte_span(res.serialized_data.value().blob));
+        // LOG("define_constant [%s | %s] %s bytes", comp_desc.algo_hash.to_hex_string(6), content_hash.to_hex_string(6),
+        //     res.serialized_data.value().blob.size_bytes());
+    }
+
+    // we still need to create new comp results on demand, so there is a compute_resource function
     comp_desc.compute_resource =
         // ensure we make a copy of "view types"
         [value = arg_traits<T>::make_const_val(cc::move(value))] //
