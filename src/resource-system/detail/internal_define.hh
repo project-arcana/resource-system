@@ -252,8 +252,6 @@ auto define_res_via_lambda(base::hash algo_hash, res_type type, FunT&& fun, Args
     comp_desc.compute_resource = [fun = cc::move(fun)] //
         (cc::span<base::content_ref const> res_args) -> base::computation_result
     {
-        CC_ASSERT(res_args.size() == sizeof...(Args) && "wrong number of inputs");
-
         // if any arg is missing, result is error
         for (auto const& arg : res_args)
             if (arg.has_error())
@@ -268,6 +266,8 @@ auto define_res_via_lambda(base::hash algo_hash, res_type type, FunT&& fun, Args
         // actual eval
         if constexpr (vsig == 0) // normal
         {
+            CC_ASSERT(res_args.size() == sizeof...(Args) && "wrong number of inputs");
+
             auto eval_res = res_evaluator<std::make_index_sequence<sizeof...(Args)>> //
                 ::template eval<std::decay_t<FunT>, arg_to_resource<Args>...>(fun, res_args);
 
@@ -276,6 +276,8 @@ auto define_res_via_lambda(base::hash algo_hash, res_type type, FunT&& fun, Args
         }
         else // variadic
         {
+            CC_ASSERT(res_args.size() >= sizeof...(Args) - 1 && "wrong number of inputs");
+
             auto eval_res = variadic_res_evaluator<std::make_index_sequence<sizeof...(Args)>> //
                 ::template eval<std::decay_t<FunT>, Args...>(fun, res_args);
 
