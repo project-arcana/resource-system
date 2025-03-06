@@ -115,6 +115,11 @@ struct arg_traits
 
 namespace detail
 {
+// e.g. cc::vector<res::handle<T>>
+template <class T>
+constexpr bool is_range_of_handles = cc::is_any_contiguous_range<T> //
+    && res::detail::is_handle<std::decay_t<cc::collection_element_t<T>>>::value;
+
 // int -> int
 // handle<float> -> float
 // result<bool> -> bool
@@ -124,7 +129,7 @@ namespace detail
 template <class T>
 using result_to_resource = typename result_traits<std::decay_t<T>>::resource_t;
 
-template <class T>
+template <class T, class = void>
 struct arg_to_resource_t
 {
     using type = T;
@@ -135,10 +140,18 @@ struct arg_to_resource_t<handle<T>>
     using type = typename arg_to_resource_t<T>::type;
 };
 template <class T>
+struct arg_to_resource_t<T, std::enable_if_t<is_range_of_handles<T>>>
+{
+    // NOTE: we expect cc::span<T const*> as function argument
+    using type = cc::span<typename arg_to_resource_t<std::decay_t<cc::collection_element_t<T>>>::type const*>;
+};
+template <class T>
 using arg_to_resource = typename arg_to_resource_t<std::decay_t<T>>::type;
 
 template <class T>
 using const_to_resource = result_to_resource<decltype(arg_traits<T>::make_const_val(std::declval<T>()))>;
+
+
 } // namespace detail
 
 /// metamodel for resource types

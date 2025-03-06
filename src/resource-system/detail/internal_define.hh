@@ -50,6 +50,26 @@ T const& get_resource_arg(base::content_ref const& content)
     return resource_traits<T>::from_content_data_ptr(content.data_ptr);
 }
 
+template <class T, bool is_variadic>
+decltype(auto) get_resource_arg_varopt(cc::span<base::content_ref const> contents, size_t idx)
+{
+    if constexpr (is_variadic)
+    {
+        using ElementT = detail::arg_to_resource<std::decay_t<decltype(std::declval<T>()[0])>>;
+        cc::vector<ElementT const*> res;
+        for (auto const& content : contents.subspan(idx))
+        {
+            CC_ASSERT(content.has_runtime_data());
+            res.push_back(&resource_traits<ElementT>::from_content_data_ptr(content.data_ptr));
+        }
+        return res;
+    }
+    else
+    {
+        return get_resource_arg<detail::arg_to_resource<T>>(contents[idx]);
+    }
+}
+
 template <class>
 struct res_evaluator;
 
@@ -63,6 +83,26 @@ struct res_evaluator<std::integer_sequence<size_t, I...>>
         // TODO: support res::result<T> in args
 
         return cc::invoke(f, detail::get_resource_arg<ResArgs>(res_args[I])...);
+    }
+};
+
+template <class>
+struct variadic_res_evaluator;
+
+template <size_t... I>
+struct variadic_res_evaluator<std::integer_sequence<size_t, I...>>
+{
+    // NOTE: ResArgs are not yet converted to resource (because last one is variadic)
+    template <class F, class... ResArgs>
+    static auto eval(F const& f, cc::span<base::content_ref const> res_args)
+    {
+        static_assert(sizeof...(ResArgs) > 0);
+        CC_ASSERT(res_args.size() >= sizeof...(ResArgs) - 1); // last one can be empty
+        // TODO: support res::result<T> in args
+
+        return cc::invoke( //
+            f,             //
+            detail::get_resource_arg_varopt<ResArgs, I == sizeof...(ResArgs) - 1>(res_args, I)...);
     }
 };
 
@@ -151,6 +191,22 @@ auto wrap_to_handle(T&& v)
         return detail::define_constant(cc::forward<T>(v));
 }
 
+// version of wrap_to_handle that works with variadic handles
+template <class T>
+void wrap_and_add_to_handle_hashes(cc::vector<base::res_hash>& hashes, T&& v)
+{
+    if constexpr (detail::is_range_of_handles<T>) // variadic
+    {
+        // NOTE: is range of _handles_, thus no define_constant needed
+        for (auto&& h : v)
+            hashes.push_back(h.get_hash());
+    }
+    else // normal
+    {
+        hashes.push_back(detail::wrap_to_handle(cc::forward<T>(v)).get_hash());
+    }
+}
+
 template <class... ResArgs>
 base::hash get_arg_type_hash()
 {
@@ -161,6 +217,16 @@ base::hash get_arg_type_hash()
         return detail::finalize_as<base::hash>(sha1);
     }();
     return hash;
+}
+
+// aka bit is 1 for each variadic arg
+template <class... Args>
+constexpr size_t variadic_signature()
+{
+    size_t s = 0;
+    size_t i = 0;
+    ((s += (size_t(detail::is_range_of_handles<Args>) << i++)), ...);
+    return s;
 }
 
 template <class FunT, class... Args>
@@ -177,12 +243,9 @@ auto define_res_via_lambda(base::hash algo_hash, res_type type, FunT&& fun, Args
     static_assert(!is_handle<ResultT>::value, "TODO: implement indirect resources");
     using ResourceT = result_to_resource<ResultT>;
 
-    // collect resource handles
-    auto constexpr res_arg_count = sizeof...(args);
-    base::res_hash res_args[res_arg_count > 0 ? res_arg_count : 1]; // the max(1,..) is to prevent zero sized arrays
-    base::res_hash* p_res_args = res_args;
-    ((*p_res_args++ = detail::wrap_to_handle(cc::forward<Args>(args)).get_hash()), ...);
+    static auto constexpr vsig = variadic_signature<Args...>();
 
+    // define the computation
     base::computation_desc comp_desc;
     comp_desc.algo_hash = algo_hash;
     comp_desc.type_hash = detail::get_arg_type_hash<arg_to_resource<Args>...>();
@@ -203,17 +266,53 @@ auto define_res_via_lambda(base::hash algo_hash, res_type type, FunT&& fun, Args
             }
 
         // actual eval
-        auto eval_res = res_evaluator<std::make_index_sequence<sizeof...(Args)>> //
-            ::template eval<std::decay_t<FunT>, arg_to_resource<Args>...>(fun, res_args);
+        if constexpr (vsig == 0) // normal
+        {
+            auto eval_res = res_evaluator<std::make_index_sequence<sizeof...(Args)>> //
+                ::template eval<std::decay_t<FunT>, arg_to_resource<Args>...>(fun, res_args);
 
-        // unpack / convert / serialize result
-        return detail::make_comp_result<ResourceT>(eval_res);
+            // unpack / convert / serialize result
+            return detail::make_comp_result<ResourceT>(eval_res);
+        }
+        else // variadic
+        {
+            auto eval_res = variadic_res_evaluator<std::make_index_sequence<sizeof...(Args)>> //
+                ::template eval<std::decay_t<FunT>, Args...>(fun, res_args);
+
+            // unpack / convert / serialize result
+            return detail::make_comp_result<ResourceT>(eval_res);
+        }
     };
 
     auto is_volatile = type == res_type::volatile_;
     auto is_persisted = type == res_type::normal;
-    auto slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_volatile, is_persisted,
-                                                    resource_traits<ResourceT>::make_deserialize());
+    res::detail::resource_slot* slot;
+
+    // check if we have a tail variadic signature
+    if constexpr (vsig == 0) // no variadics
+    {
+        // collect resource handles
+        auto constexpr res_arg_count = sizeof...(args);
+        base::res_hash res_args[res_arg_count > 0 ? res_arg_count : 1]; // the max(1,..) is to prevent zero sized arrays
+        base::res_hash* p_res_args = res_args;
+        ((*p_res_args++ = detail::wrap_to_handle(cc::forward<Args>(args)).get_hash()), ...);
+
+        // define resource
+        slot = detail::get_or_create_resource_slot(cc::move(comp_desc), cc::span<base::res_hash>(res_args, res_arg_count), is_volatile, is_persisted,
+                                                   resource_traits<ResourceT>::make_deserialize());
+    }
+    else // variadic
+    {
+        static_assert(vsig == (size_t(1) << (sizeof...(Args) - 1)) && "only the last argument is allowed to be a range of handles");
+
+        // collect resource handles
+        cc::vector<base::res_hash> res_args;
+        (wrap_and_add_to_handle_hashes(res_args, cc::forward<Args>(args)), ...);
+
+        // define resource
+        slot = detail::get_or_create_resource_slot(cc::move(comp_desc), res_args, is_volatile, is_persisted, resource_traits<ResourceT>::make_deserialize());
+    }
+
     return slot->template create_handle<ResourceT>();
 }
 } // namespace res::detail
