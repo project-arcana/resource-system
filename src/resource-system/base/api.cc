@@ -14,6 +14,7 @@
 #include <resource-system/detail/hash_helper.hh>
 #include <resource-system/detail/log.hh>
 
+#include <chrono>
 #include <mutex>
 #include <shared_mutex>
 
@@ -804,7 +805,7 @@ void res::base::ResourceSystem::process_all()
     }
 }
 
-void res::base::ResourceSystem::inject_invoc_cache(cc::span<const cc::pair<invoc_hash, content_hash>> invocs)
+void res::base::ResourceSystem::inject_invoc_cache(cc::span<cc::pair<invoc_hash, content_hash> const> invocs)
 {
     m->invoc_store.modify_many(
         [&](cc::map<invoc_hash, invoc_desc>& data)
@@ -831,7 +832,7 @@ cc::vector<cc::pair<res::base::invoc_hash, res::base::content_hash>> res::base::
     return res;
 }
 
-cc::vector<res::base::content_ref> res::base::ResourceSystem::collect_all_persistent_content(cc::span<const content_hash> contents)
+cc::vector<res::base::content_ref> res::base::ResourceSystem::collect_all_persistent_content(cc::span<content_hash const> contents)
 {
     int curr_gen = generation;
 
