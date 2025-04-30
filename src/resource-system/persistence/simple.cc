@@ -143,6 +143,7 @@ bool res::persistence::SimplePersistentStore::save()
         {
             this->idx = idx;
             bytes_left = max_size;
+            CC_ASSERT(max_size > 0);
 
             // create file and dir
             auto path = std::filesystem::path(cc::string(filename).c_str());
@@ -157,17 +158,17 @@ bool res::persistence::SimplePersistentStore::save()
                 if (curr_size > max_size)
                     bytes_left = 0;
                 else
-                    bytes_left = max_size - curr_size;
+                    bytes_left = int64_t(max_size) - int64_t(curr_size);
             }
 
             file = std::ofstream(path, std::ios::binary | std::ios::app);
             CC_ASSERT(file.is_open());
         }
 
-        // returns nullif not enough space
+        // returns null if not enough space
         cc::optional<content_info> write(base::content_ref const& content)
         {
-            if (bytes_left == 0)
+            if (bytes_left <= 0)
                 return cc::nullopt;
 
             content_info info;
@@ -234,7 +235,7 @@ bool res::persistence::SimplePersistentStore::save()
 
         int idx;
         std::ofstream file;
-        size_t bytes_left;
+        int64_t bytes_left;
     };
     cc::vector<file_writer> writers;
     for (auto const& content : content_res)
@@ -249,17 +250,40 @@ bool res::persistence::SimplePersistentStore::save()
                 break;
             }
 
+        // no known existing writer fits for this content
+        // so we try a new one
         if (needs_new)
         {
-            auto fidx = int(writers.size());
-            writers.emplace_back(fidx, content_data_filename(fidx), _config.max_content_file_size);
-            auto info = writers.back().write(content);
-            if (info.has_value())
+            // we don't know about existing files a priori, so we have to potentially loop
+            while (true)
             {
-                new_contents.emplace_back(content.hash, info.value());
+                auto fidx = int(writers.size());
+
+                auto const filename = content_data_filename(fidx);
+                auto const is_existing_file = babel::file::exists(filename);
+
+                writers.emplace_back(fidx, filename, _config.max_content_file_size);
+                auto info = writers.back().write(content);
+                if (info.has_value())
+                {
+                    new_contents.emplace_back(content.hash, info.value());
+                    break; // found a place
+                }
+                else
+                {
+                    // the chosen "fidx" corresponds to an existing file
+                    // which might already be full
+                    // in which case, we simply try again (with the next fidx)
+                    if (is_existing_file)
+                        continue;
+
+                    // if this was a fresh file
+                    // we should always be able to write the content
+                    // so something in the filesystem went wrong and we want to stop here
+                    LOG_WARN("could not write content to '%s' (this indicates a bug or filesystem error)", content_data_filename(fidx));
+                    return false;
+                }
             }
-            else
-                LOG_WARN("could not write content to '%s'", content_data_filename(fidx));
         }
     }
 
